@@ -14,7 +14,7 @@
 
 🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [Clawdbot](https://github.com/openclaw/openclaw) 
 
-⚡️ Delivers core agent functionality in just **~4,000** lines of code — **99% smaller** than Clawdbot's 430k+ lines.
+⚡️ Delivers core agent functionality in about **~6,000** lines of Python (excluding tests) — **~99% smaller** than Clawdbot's 430k+ lines.
 
 ## 📢 News
 
@@ -22,13 +22,13 @@
 
 ## Key Features of nanobot:
 
-🪶 **Ultra-Lightweight**: Just ~4,000 lines of code — 99% smaller than Clawdbot - core functionality.
+🪶 **Ultra-Lightweight**: About ~6,000 lines of Python (excluding tests) — ~99% smaller than Clawdbot - core functionality.
 
 🔬 **Research-Ready**: Clean, readable code that's easy to understand, modify, and extend for research.
 
 ⚡️ **Lightning Fast**: Minimal footprint means faster startup, lower resource usage, and quicker iterations.
 
-💎 **Easy-to-Use**: One-click to depoly and you're ready to go.
+💎 **Easy-to-Use**: One command to onboard and you're ready to go.
 
 ## 🏗️ Architecture
 
@@ -69,6 +69,12 @@ cd nanobot
 pip install -e .
 ```
 
+For contributors:
+
+```bash
+pip install -e ".[dev]"
+```
+
 **Install with [uv](https://github.com/astral-sh/uv)** (stable, fast)
 
 ```bash
@@ -84,7 +90,7 @@ pip install nanobot-ai
 ## 🚀 Quick Start
 
 > [!TIP]
-> Set your API key in `~/.nanobot/config.json`.
+> Run `nanobot onboard` to create `~/.nanobot/config.json`, then add your API key.
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
 > You can also change the model to `minimax/minimax-m2` for lower cost.
 
@@ -249,7 +255,7 @@ nanobot gateway
 Uses **WebSocket** long connection — no public IP required.
 
 ```bash
-pip install nanobot-ai[feishu]
+pip install "nanobot-ai[feishu]"
 ```
 
 **1. Create a Feishu bot**
