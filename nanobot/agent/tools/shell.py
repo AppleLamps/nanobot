@@ -61,10 +61,22 @@ class ExecTool(Tool):
         }
     
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
+        base_root = self.working_dir or os.getcwd()
         cwd = working_dir or self.working_dir or os.getcwd()
         guard_error = self._guard_command(command, cwd)
         if guard_error:
             return guard_error
+
+        # If the tool is restricted, the caller must not be able to escape by
+        # overriding working_dir to somewhere outside the configured root.
+        if self.restrict_to_workspace:
+            try:
+                root = Path(base_root).resolve()
+                resolved_cwd = Path(cwd).resolve()
+                if root not in resolved_cwd.parents and resolved_cwd != root:
+                    return "Error: Command blocked by safety guard (working_dir outside workspace)"
+            except Exception:
+                return "Error: Command blocked by safety guard (invalid working_dir)"
         
         try:
             process = await asyncio.create_subprocess_shell(
@@ -122,6 +134,13 @@ class ExecTool(Tool):
                 return "Error: Command blocked by safety guard (not in allowlist)"
 
         if self.restrict_to_workspace:
+            # Block obvious directory-escape patterns that don't contain a slash.
+            # This is intentionally conservative: users can still use subdirs.
+            if re.search(r"\b(cd|chdir|pushd|set-location|sl)\s+\.\.(\s|$)", lower):
+                return "Error: Command blocked by safety guard (directory escape detected)"
+            if re.search(r"\b(cd|chdir|pushd|set-location|sl)\s+([a-z]:\\|\\\\|/)", lower):
+                return "Error: Command blocked by safety guard (absolute directory change detected)"
+
             if "..\\" in cmd or "../" in cmd:
                 return "Error: Command blocked by safety guard (path traversal detected)"
 

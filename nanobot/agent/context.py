@@ -163,6 +163,13 @@ When remembering something, write to the memory file above."""
             return text
         return f"[truncated {label} to last {max_chars} chars]\n" + text[-max_chars:]
 
+    def _truncate_head(self, text: str, max_chars: int, label: str) -> str:
+        if max_chars <= 0:
+            return ""
+        if len(text) <= max_chars:
+            return text
+        return f"[truncated {label} to first {max_chars} chars]\n" + text[:max_chars]
+
     def _get_bootstrap_content(self) -> str:
         """Load bootstrap files from workspace with caching and truncation."""
         files: list[tuple[str, float]] = []
@@ -189,7 +196,9 @@ When remembering something, write to the memory file above."""
 
         text = "\n\n".join(parts) if parts else ""
         if text:
-            text = self._truncate_tail(text, self.bootstrap_max_chars, "bootstrap")
+            # Keep the HEAD of bootstrap files so critical instructions at the top
+            # don't get dropped as the file grows.
+            text = self._truncate_head(text, self.bootstrap_max_chars, "bootstrap")
 
         self._set_cache("bootstrap", signature, text)
         return text

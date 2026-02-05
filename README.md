@@ -90,7 +90,7 @@ pip install nanobot-ai
 ## 🚀 Quick Start
 
 > [!TIP]
-> Run `nanobot onboard` to create `~/.nanobot/config.json`, then add your API key.
+> Run `nanobot onboard` to create `~/.nanobot/config.json`. In an interactive terminal, it will also prompt you for API keys (you can skip and edit the JSON later). Use `nanobot onboard --no-prompt` for non-interactive runs.
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
 > You can also change the model to `minimax/minimax-m2` for lower cost.
 

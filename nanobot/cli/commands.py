@@ -1,6 +1,7 @@
 """CLI commands for nanobot."""
 
 import asyncio
+import sys
 from pathlib import Path
 
 import typer
@@ -16,6 +17,26 @@ app = typer.Typer(
 )
 
 console = Console()
+
+
+def _prompt_optional_secret(label: str) -> str:
+    """
+    Prompt for a secret value (API key), allowing blank to skip.
+    Uses hidden input so the value isn't echoed to the terminal.
+    """
+    value = typer.prompt(
+        f"{label} (leave blank to skip)",
+        default="",
+        show_default=False,
+        hide_input=True,
+    )
+    return (value or "").strip()
+
+
+def _prompt_optional_text(label: str) -> str:
+    """Prompt for a text value, allowing blank to skip."""
+    value = typer.prompt(f"{label} (leave blank to skip)", default="", show_default=False)
+    return (value or "").strip()
 
 
 def version_callback(value: bool):
@@ -40,23 +61,142 @@ def main(
 
 
 @app.command()
-def onboard():
+def onboard(
+    prompt: bool | None = typer.Option(
+        None,
+        "--prompt/--no-prompt",
+        help="Prompt for missing keys/settings (defaults to on in a TTY, off in non-interactive runs).",
+    ),
+    openrouter_key: str | None = typer.Option(
+        None, "--openrouter-key", envvar="OPENROUTER_API_KEY", help="OpenRouter API key."
+    ),
+    anthropic_key: str | None = typer.Option(
+        None, "--anthropic-key", envvar="ANTHROPIC_API_KEY", help="Anthropic API key."
+    ),
+    openai_key: str | None = typer.Option(
+        None, "--openai-key", envvar="OPENAI_API_KEY", help="OpenAI API key."
+    ),
+    gemini_key: str | None = typer.Option(
+        None, "--gemini-key", envvar="GEMINI_API_KEY", help="Gemini API key."
+    ),
+    groq_key: str | None = typer.Option(
+        None, "--groq-key", envvar="GROQ_API_KEY", help="Groq API key."
+    ),
+    zhipu_key: str | None = typer.Option(
+        None, "--zhipu-key", envvar="ZHIPU_API_KEY", help="Zhipu API key."
+    ),
+    vllm_base: str | None = typer.Option(
+        None, "--vllm-base", envvar="VLLM_API_BASE", help="vLLM / local OpenAI-compatible base URL."
+    ),
+    brave_key: str | None = typer.Option(
+        None, "--brave-key", envvar="BRAVE_API_KEY", help="Brave Search API key (enables web.search tool)."
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Default model (e.g. anthropic/claude-opus-4-5)."
+    ),
+):
     """Initialize nanobot configuration and workspace."""
-    from nanobot.config.loader import get_config_path, save_config
+    from nanobot.config.loader import get_config_path, load_config, save_config
     from nanobot.config.schema import Config
     from nanobot.utils.helpers import get_workspace_path
     
     config_path = get_config_path()
+    config_existed = config_path.exists()
+    do_prompt = prompt if prompt is not None else sys.stdin.isatty()
     
     if config_path.exists():
         console.print(f"[yellow]Config already exists at {config_path}[/yellow]")
-        if not typer.confirm("Overwrite?"):
-            raise typer.Exit()
+        if do_prompt:
+            if typer.confirm("Update API keys and settings in the existing config?", default=True):
+                config = load_config(config_path)
+            elif typer.confirm("Overwrite the existing config?", default=False):
+                config = Config()
+            else:
+                raise typer.Exit()
+        else:
+            # Non-interactive runs default to updating in place (no destructive overwrite).
+            config = load_config(config_path)
+    else:
+        config = Config()
     
-    # Create default config
-    config = Config()
+    # Provider API keys (optional, but needed for the agent to run).
+    if do_prompt:
+        console.print("\n[bold]LLM Provider Setup[/bold]")
+        console.print("[dim]You can skip any prompt and edit ~/.nanobot/config.json later.[/dim]\n")
+
+    # Apply any explicitly provided values first (flags/env).
+    if openrouter_key:
+        config.providers.openrouter.api_key = openrouter_key.strip()
+    if anthropic_key:
+        config.providers.anthropic.api_key = anthropic_key.strip()
+    if openai_key:
+        config.providers.openai.api_key = openai_key.strip()
+    if gemini_key:
+        config.providers.gemini.api_key = gemini_key.strip()
+    if groq_key:
+        config.providers.groq.api_key = groq_key.strip()
+    if zhipu_key:
+        config.providers.zhipu.api_key = zhipu_key.strip()
+    if vllm_base:
+        config.providers.vllm.api_base = vllm_base.strip()
+    if brave_key:
+        config.tools.web.search.api_key = brave_key.strip()
+    if model:
+        config.agents.defaults.model = model.strip() or config.agents.defaults.model
+
+    if do_prompt:
+        if not config.providers.openrouter.api_key:
+            key = _prompt_optional_secret("OpenRouter API key (recommended)")
+            if key:
+                config.providers.openrouter.api_key = key
+        if not config.providers.anthropic.api_key:
+            key = _prompt_optional_secret("Anthropic API key")
+            if key:
+                config.providers.anthropic.api_key = key
+        if not config.providers.openai.api_key:
+            key = _prompt_optional_secret("OpenAI API key")
+            if key:
+                config.providers.openai.api_key = key
+        if not config.providers.gemini.api_key:
+            key = _prompt_optional_secret("Gemini API key")
+            if key:
+                config.providers.gemini.api_key = key
+        if not config.providers.groq.api_key:
+            key = _prompt_optional_secret(
+                "Groq API key (optional, also used for voice transcription)"
+            )
+            if key:
+                config.providers.groq.api_key = key
+        if not config.providers.zhipu.api_key:
+            key = _prompt_optional_secret("Zhipu API key")
+            if key:
+                config.providers.zhipu.api_key = key
+
+        if not config.providers.vllm.api_base:
+            base = _prompt_optional_text(
+                "vLLM / local OpenAI-compatible base URL (e.g. http://localhost:8000/v1)"
+            )
+            if base:
+                config.providers.vllm.api_base = base
+
+        # Optional: web search API key (Brave Search).
+        if not config.tools.web.search.api_key:
+            brave = _prompt_optional_secret("Brave Search API key (enables web.search tool)")
+            if brave:
+                config.tools.web.search.api_key = brave
+
+        # Optional: default model
+        if not model:
+            selected = typer.prompt(
+                "Default model", default=config.agents.defaults.model, show_default=True
+            )
+            config.agents.defaults.model = (
+                (selected or "").strip() or config.agents.defaults.model
+            )
+
     save_config(config)
-    console.print(f"[green]✓[/green] Created config at {config_path}")
+    verb = "Saved" if config_existed else "Created"
+    console.print(f"[green]✓[/green] {verb} config at {config_path}")
     
     # Create workspace
     workspace = get_workspace_path()
@@ -67,9 +207,13 @@ def onboard():
     
     console.print(f"\n{__logo__} nanobot is ready!")
     console.print("\nNext steps:")
-    console.print("  1. Add your API key to [cyan]~/.nanobot/config.json[/cyan]")
-    console.print("     Get one at: https://openrouter.ai/keys")
-    console.print("  2. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
+    if not config.get_api_key():
+        console.print("  1. Add your API key to [cyan]~/.nanobot/config.json[/cyan]")
+        console.print("     Get one at: https://openrouter.ai/keys")
+        console.print("  2. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
+    else:
+        console.print("  1. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
+        console.print("  2. Check: [cyan]nanobot status[/cyan]")
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/nanobot#-chat-apps[/dim]")
 
 
@@ -78,16 +222,65 @@ def onboard():
 def _create_workspace_templates(workspace: Path):
     """Create default workspace template files."""
     templates = {
-        "AGENTS.md": """# Agent Instructions
+        "AGENTS.md": """# Agent Instructions (Read First)
 
-You are a helpful AI assistant. Be concise, accurate, and friendly.
+You are nanobot, the user's personal AI assistant. Your job is to be useful and reliable.
 
 ## Guidelines
 
-- Always explain what you're doing before taking actions
-- Ask for clarification when the request is ambiguous
-- Use tools to help accomplish tasks
-- Remember important information in your memory files
+- Explain what you're doing before using tools
+- Ask clarifying questions when the request is ambiguous
+- Prefer small, verifiable steps over big guesses
+- Summarize what you changed (and where) after edits
+
+## Tools Available
+
+You have access to:
+- File operations (read, write, edit, list)
+- Shell commands (exec)
+- Web access (search, fetch)
+- Messaging (message)
+- Background tasks (spawn)
+
+## Bootstrap Files
+
+Bootstrap files live in the workspace root:
+- `AGENTS.md`: operating rules (this file)
+- `SOUL.md`: personality and values
+- `USER.md`: user preferences
+- `TOOLS.md`: tool reference
+- `IDENTITY.md`: role definition
+
+## Memory
+
+- Memory lives under `memory/` in the workspace.
+- IMPORTANT: The active memory file path is shown in your system prompt as:
+  `Memory file: ...`
+  Always write durable facts and user preferences to that file.
+- Use daily notes (`YYYY-MM-DD.md`) for temporary/log-style notes.
+
+## Scheduled Reminders
+
+When the user asks for a reminder at a specific time, use `exec` to run:
+```
+nanobot cron add --name "reminder" --message "Your message" --at "YYYY-MM-DDTHH:MM:SS" --deliver --to "USER_ID" --channel "CHANNEL"
+```
+Get USER_ID and CHANNEL from the current session (e.g., `8281248569` and `telegram` from `telegram:8281248569`).
+
+Do NOT just write reminders to a memory file; that won't trigger actual notifications.
+
+## Heartbeat Tasks
+
+`HEARTBEAT.md` is checked every 30 minutes (when running the gateway). Manage periodic tasks by editing this file:
+- Add tasks with `edit_file`
+- Remove tasks with `edit_file`
+- Rewrite the whole list with `write_file`
+
+Task format examples:
+```
+- [ ] Check weather forecast for today
+- [ ] Review today's calendar at 9am
+```
 """,
         "SOUL.md": """# Soul
 
@@ -105,6 +298,16 @@ I am nanobot, a lightweight AI assistant.
 - User privacy and safety
 - Transparency in actions
 """,
+        "IDENTITY.md": """# Identity
+
+You are nanobot: a practical, tool-using personal assistant.
+
+## Role
+
+- Help the user get real work done: research, writing, coding, planning, automation.
+- Use tools to reduce uncertainty or effort. If you can answer directly, answer directly.
+- Preserve consistency by following `AGENTS.md`, `SOUL.md`, `USER.md`, and the active memory file shown in the system prompt.
+""",
         "USER.md": """# User
 
 Information about the user goes here.
@@ -114,6 +317,37 @@ Information about the user goes here.
 - Communication style: (casual/formal)
 - Timezone: (your timezone)
 - Language: (your preferred language)
+""",
+        "TOOLS.md": """# Tools (nanobot)
+
+## File Operations
+
+- `read_file(path)`: read a file
+- `write_file(path, content)`: write a file (creates parent directories)
+- `edit_file(path, old_text, new_text)`: replace an exact snippet (must be unique)
+- `list_dir(path)`: list a directory
+
+## Shell Execution
+
+- `exec(command, working_dir?)`: run a shell command
+
+Notes:
+- Commands can time out
+- Dangerous commands are blocked best-effort
+- Output is truncated when very long
+
+## Web Access
+
+- `web_search(query, count?)`: Brave Search (requires `BRAVE_API_KEY` / config)
+- `web_fetch(url, extractMode?, maxChars?)`: fetch and extract page content
+
+## Communication
+
+- `message(content, channel?, chat_id?)`: send a message to a specific chat
+
+## Background Tasks
+
+- `spawn(task, label?)`: spawn a subagent for longer work
 """,
     }
     
@@ -145,6 +379,30 @@ This file stores important information that should persist across sessions.
 (Things to remember)
 """)
         console.print("  [dim]Created memory/MEMORY.md[/dim]")
+
+    # Create scope directories so the default config (memoryScope=session) feels real immediately.
+    # CLI default session id is "cli:default" -> on disk "cli_default".
+    sessions_dir = memory_dir / "sessions"
+    users_dir = memory_dir / "users"
+    sessions_dir.mkdir(exist_ok=True)
+    users_dir.mkdir(exist_ok=True)
+
+    cli_session_dir = sessions_dir / "cli_default"
+    cli_session_dir.mkdir(parents=True, exist_ok=True)
+    cli_session_memory = cli_session_dir / "MEMORY.md"
+    if not cli_session_memory.exists():
+        cli_session_memory.write_text(
+            """# Session Memory (cli:default)
+
+This file is used when `memoryScope` is set to `session` and you're chatting from the CLI default session.
+
+## Durable Facts
+
+- 
+""",
+            encoding="utf-8",
+        )
+        console.print("  [dim]Created memory/sessions/cli_default/MEMORY.md[/dim]")
 
 
 # ============================================================================
