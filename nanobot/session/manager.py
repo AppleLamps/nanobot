@@ -19,7 +19,7 @@ class Session:
     Stores messages in JSONL format for easy reading and persistence.
     """
 
-    HISTORY_RETENTION_MULTIPLIER = 2  # Retain extra messages beyond the context window.
+    HISTORY_RETENTION_MULTIPLIER = 2  # Multiplier on max_messages to retain extra history.
     
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -43,7 +43,7 @@ class Session:
         Get message history for LLM context.
         
         Args:
-            max_messages: Maximum messages to return.
+            max_messages: Maximum messages to return (expected to be a small positive integer).
         
         Returns:
             List of messages in LLM format.
