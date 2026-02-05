@@ -19,7 +19,7 @@ class Session:
     Stores messages in JSONL format for easy reading and persistence.
     """
 
-    _HISTORY_RETENTION_MULTIPLIER = 2  # Trim when storage exceeds 2x max_messages.
+    _HISTORY_RETENTION_MULTIPLIER = 2  # Keep up to 2x max_messages; trim when exceeded.
     
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
