@@ -172,6 +172,38 @@ nanobot agent -m "Hello from my local LLM!"
 > [!TIP]
 > The `apiKey` can be any non-empty string for local servers that don't require authentication.
 
+## 🖥️ Web UI (Optional)
+
+Prefer a local browser chat UI? Enable the built-in `webui` channel.
+
+**1. Configure** (`~/.nanobot/config.json`)
+
+```json
+{
+  "channels": {
+    "webui": {
+      "enabled": true,
+      "host": "127.0.0.1",
+      "port": 18791
+    }
+  }
+}
+```
+
+**2. Run**
+
+```bash
+nanobot gateway
+```
+
+**3. Open**
+
+- `http://127.0.0.1:18791/`
+
+Notes:
+- By default it binds to loopback (`127.0.0.1`) for safety.
+- If you bind to a non-loopback host (e.g. `0.0.0.0`), set `channels.webui.authToken` and open with `?token=...`.
+
 ## 💬 Chat Apps
 
 Talk to your nanobot through Telegram, WhatsApp, or Feishu — anytime, anywhere.

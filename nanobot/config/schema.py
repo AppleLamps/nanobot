@@ -33,11 +33,23 @@ class FeishuConfig(BaseModel):
     rate_limit_s: int = 0  # Minimum seconds between messages from the same sender
 
 
+class WebUIConfig(BaseModel):
+    """Local web UI channel configuration."""
+
+    enabled: bool = False
+    host: str = "127.0.0.1"  # Bind address. Prefer loopback for safety.
+    port: int = 18791
+    auth_token: str = ""  # If set, requires `?token=...` for both HTTP and WS.
+    allow_from: list[str] = Field(default_factory=list)  # Allowed sender IDs (advanced)
+    rate_limit_s: int = 0  # Minimum seconds between messages from the same sender
+
+
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    webui: WebUIConfig = Field(default_factory=WebUIConfig)
 
 
 class AgentDefaults(BaseModel):

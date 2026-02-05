@@ -247,6 +247,19 @@ def gateway(
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
+
+    # Web UI hint (served by the webui channel itself).
+    try:
+        if getattr(config.channels, "webui", None) and config.channels.webui.enabled:
+            host = (config.channels.webui.host or "127.0.0.1").strip()
+            wport = int(config.channels.webui.port or 18791)
+            token_hint = ""
+            if (config.channels.webui.auth_token or "").strip():
+                token_hint = "?token=…"
+            console.print(f"[green]✓[/green] WebUI: http://{host}:{wport}/{token_hint}")
+    except Exception:
+        # Never fail gateway startup due to a hint.
+        pass
     
     cron_status = cron.status()
     if cron_status["jobs"] > 0:
