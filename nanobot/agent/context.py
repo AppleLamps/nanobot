@@ -206,11 +206,14 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
         head = result[:self.TOOL_RESULT_HEAD_CHARS]
         tail = result[-self.TOOL_RESULT_TAIL_CHARS:]
         truncated = len(result) - len(head) - len(tail)
-        return (
-            f"{head}\n\n"
-            f"...[truncated {truncated} chars]...\n\n"
-            f"{tail}"
-        )
+        truncation_msg = f"\n\n...[truncated {truncated} chars]...\n\n"
+        
+        # Check if truncation would actually save space
+        truncated_length = len(head) + len(truncation_msg) + len(tail)
+        if truncated_length >= len(result):
+            return result
+        
+        return f"{head}{truncation_msg}{tail}"
     
     def add_assistant_message(
         self,
