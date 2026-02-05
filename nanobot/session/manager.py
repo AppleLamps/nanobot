@@ -18,6 +18,8 @@ class Session:
     
     Stores messages in JSONL format for easy reading and persistence.
     """
+
+    _HISTORY_RETENTION_MULTIPLIER = 2  # Keep up to 2x max_messages; trim when exceeded.
     
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -41,11 +43,21 @@ class Session:
         Get message history for LLM context.
         
         Args:
-            max_messages: Maximum messages to return.
+            max_messages: Maximum messages to return (non-positive values return an empty list).
         
         Returns:
             List of messages in LLM format.
         """
+        if max_messages <= 0:
+            return []
+
+        # max_messages is positive here due to the guard above.
+        max_retained = max_messages * self._HISTORY_RETENTION_MULTIPLIER
+        if len(self.messages) > max_retained:
+            # Permanently trim older messages to prevent unbounded session growth.
+            self.messages = self.messages[-max_retained:]
+            self.updated_at = datetime.now()
+
         # Get recent messages
         recent = self.messages[-max_messages:] if len(self.messages) > max_messages else self.messages
         
