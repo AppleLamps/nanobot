@@ -1,6 +1,7 @@
 """Base class for agent tools."""
 
 from abc import ABC, abstractmethod
+import json
 from typing import Any
 
 
@@ -11,7 +12,17 @@ class Tool(ABC):
     Tools are capabilities that the agent can use to interact with
     the environment, such as reading files, executing commands, etc.
     """
-    
+
+    # Whether multiple calls to this tool can safely run concurrently.
+    # Only mark True for tools that don't depend on shared mutable state.
+    parallel_safe: bool = False
+
+    # Whether results of this tool should be cached within a ToolRegistry instance.
+    cacheable: bool = False
+
+    # Optional cache TTL (seconds). None means "no TTL" (eviction only by LRU size).
+    cache_ttl_s: float | None = None
+
     _TYPE_MAP = {
         "string": str,
         "integer": int,
@@ -51,6 +62,24 @@ class Tool(ABC):
             String result of the tool execution.
         """
         pass
+
+    def cache_key(self, params: dict[str, Any]) -> str | None:
+        """
+        Return a stable string key for caching this call, or None to disable caching.
+
+        Default behavior: JSON-serialize params with sorted keys (only if cacheable=True).
+        Tools with environment-dependent outputs should override this.
+        """
+        if not getattr(self, "cacheable", False):
+            return None
+        try:
+            return json.dumps(params, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            return None
+
+    def should_cache(self, result: str) -> bool:
+        """Return True if a result should be stored in cache."""
+        return not result.strip().lower().startswith("error:")
 
     def validate_params(self, params: dict[str, Any]) -> list[str]:
         """Validate tool parameters against JSON schema. Returns error list (empty if valid)."""

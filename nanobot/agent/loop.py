@@ -301,13 +301,13 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts
                 )
                 
-                # Execute tools
+                # Execute tools (parallelize consecutive parallel-safe calls)
                 abort_loop = False
-                for tool_call in response.tool_calls:
+                results = await self.tools.execute_calls(response.tool_calls, allow_parallel=True)
+                for tool_call, result in zip(response.tool_calls, results):
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
                     )
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -425,11 +425,11 @@ class AgentLoop:
                 )
                 
                 abort_loop = False
-                for tool_call in response.tool_calls:
+                results = await self.tools.execute_calls(response.tool_calls, allow_parallel=True)
+                for tool_call, result in zip(response.tool_calls, results):
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
                     )
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )

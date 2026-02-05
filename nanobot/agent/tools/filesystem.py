@@ -25,6 +25,9 @@ def _resolve_path(
 class ReadFileTool(Tool):
     """Tool to read file contents."""
 
+    parallel_safe = True
+    cacheable = True
+
     def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
         self.workspace_root = workspace_root
         self.restrict_to_workspace = restrict_to_workspace
@@ -70,6 +73,24 @@ class ReadFileTool(Tool):
             return f"Error: Permission denied: {path}"
         except Exception as e:
             return f"Error reading file: {str(e)}"
+
+    def cache_key(self, params: dict[str, Any]) -> str | None:
+        # Include stat info so edits invalidate cache without relying on TTL.
+        raw = params.get("path")
+        if not isinstance(raw, str) or not raw:
+            return None
+        file_path, error = _resolve_path(
+            raw, self.workspace_root, self.restrict_to_workspace
+        )
+        if error or file_path is None:
+            return None
+        try:
+            if not file_path.exists() or not file_path.is_file():
+                return None
+            st = file_path.stat()
+            return f"{str(file_path.resolve())}|{st.st_mtime_ns}|{st.st_size}"
+        except Exception:
+            return None
 
 
 class WriteFileTool(Tool):

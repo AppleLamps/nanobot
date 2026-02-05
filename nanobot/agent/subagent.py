@@ -157,9 +157,9 @@ class SubagentManager:
                     })
                     
                     # Execute tools
-                    for tool_call in response.tool_calls:
+                    results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
+                    for tool_call, result in zip(response.tool_calls, results):
                         logger.debug(f"Subagent [{task_id}] executing: {tool_call.name}")
-                        result = await tools.execute(tool_call.name, tool_call.arguments)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,

@@ -48,6 +48,9 @@ class WebSearchTool(Tool):
     
     name = "web_search"
     description = "Search the web. Returns titles, URLs, and snippets."
+    parallel_safe = True
+    cacheable = True
+    cache_ttl_s = 300.0
     parameters = {
         "type": "object",
         "properties": {
@@ -94,6 +97,9 @@ class WebFetchTool(Tool):
     """Fetch and extract content from a URL using Readability."""
     
     name = "web_fetch"
+    parallel_safe = True
+    cacheable = True
+    cache_ttl_s = 600.0
     description = "Fetch URL and extract readable content (HTML → markdown/text)."
     parameters = {
         "type": "object",
@@ -149,6 +155,16 @@ class WebFetchTool(Tool):
                               "extractor": extractor, "truncated": truncated, "length": len(text), "text": text})
         except Exception as e:
             return json.dumps({"error": str(e), "url": url})
+
+    def should_cache(self, result: str) -> bool:
+        # Avoid caching failed fetches (they may be transient).
+        try:
+            obj = json.loads(result)
+            if isinstance(obj, dict) and obj.get("error"):
+                return False
+        except Exception:
+            pass
+        return super().should_cache(result)
     
     def _to_markdown(self, html: str) -> str:
         """Convert HTML to markdown."""
