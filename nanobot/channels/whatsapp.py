@@ -21,6 +21,7 @@ class WhatsAppChannel(BaseChannel):
     """
     
     name = "whatsapp"
+    max_message_chars = 1500
     
     def __init__(self, config: WhatsAppConfig, bus: MessageBus):
         super().__init__(config, bus)
@@ -78,15 +79,16 @@ class WhatsAppChannel(BaseChannel):
             logger.warning("WhatsApp bridge not connected")
             return
         
-        try:
-            payload = {
-                "type": "send",
-                "to": msg.chat_id,
-                "text": msg.content
-            }
-            await self._ws.send(json.dumps(payload))
-        except Exception as e:
-            logger.error(f"Error sending WhatsApp message: {e}")
+        for chunk in self._split_content(msg.content):
+            try:
+                payload = {
+                    "type": "send",
+                    "to": msg.chat_id,
+                    "text": chunk
+                }
+                await self._ws.send(json.dumps(payload))
+            except Exception as e:
+                logger.error(f"Error sending WhatsApp message: {e}")
     
     async def _handle_bridge_message(self, raw: str) -> None:
         """Handle a message from the bridge."""

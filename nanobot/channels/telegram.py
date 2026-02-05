@@ -84,6 +84,7 @@ class TelegramChannel(BaseChannel):
     """
     
     name = "telegram"
+    max_message_chars = 3500
     
     def __init__(self, config: TelegramConfig, bus: MessageBus, groq_api_key: str = ""):
         super().__init__(config, bus)
@@ -156,29 +157,30 @@ class TelegramChannel(BaseChannel):
         if not self._app:
             logger.warning("Telegram bot not running")
             return
-        
+
         try:
-            # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
-            # Convert markdown to Telegram HTML
-            html_content = _markdown_to_telegram_html(msg.content)
-            await self._app.bot.send_message(
-                chat_id=chat_id,
-                text=html_content,
-                parse_mode="HTML"
-            )
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
-        except Exception as e:
-            # Fallback to plain text if HTML parsing fails
-            logger.warning(f"HTML parse failed, falling back to plain text: {e}")
+            return
+
+        for chunk in self._split_content(msg.content):
             try:
+                html_content = _markdown_to_telegram_html(chunk)
                 await self._app.bot.send_message(
-                    chat_id=int(msg.chat_id),
-                    text=msg.content
+                    chat_id=chat_id,
+                    text=html_content,
+                    parse_mode="HTML"
                 )
-            except Exception as e2:
-                logger.error(f"Error sending Telegram message: {e2}")
+            except Exception as e:
+                logger.warning(f"HTML parse failed, falling back to plain text: {e}")
+                try:
+                    await self._app.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk
+                    )
+                except Exception as e2:
+                    logger.error(f"Error sending Telegram message: {e2}")
     
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""

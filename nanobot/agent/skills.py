@@ -22,6 +22,19 @@ class SkillsLoader:
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        self._metadata_cache: dict[str, tuple[float, dict]] = {}
+        self._content_cache: dict[str, tuple[float, str]] = {}
+
+    def resolve_skill_path(self, name: str) -> Path | None:
+        """Resolve a skill name to its SKILL.md path."""
+        workspace_skill = self.workspace_skills / name / "SKILL.md"
+        if workspace_skill.exists():
+            return workspace_skill
+        if self.builtin_skills:
+            builtin_skill = self.builtin_skills / name / "SKILL.md"
+            if builtin_skill.exists():
+                return builtin_skill
+        return None
     
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -66,18 +79,23 @@ class SkillsLoader:
         Returns:
             Skill content or None if not found.
         """
-        # Check workspace first
-        workspace_skill = self.workspace_skills / name / "SKILL.md"
-        if workspace_skill.exists():
-            return workspace_skill.read_text(encoding="utf-8")
-        
-        # Check built-in
-        if self.builtin_skills:
-            builtin_skill = self.builtin_skills / name / "SKILL.md"
-            if builtin_skill.exists():
-                return builtin_skill.read_text(encoding="utf-8")
-        
-        return None
+        path = self.resolve_skill_path(name)
+        if not path:
+            return None
+
+        key = str(path)
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            mtime = 0.0
+
+        cached = self._content_cache.get(key)
+        if cached and cached[0] == mtime:
+            return cached[1]
+
+        content = path.read_text(encoding="utf-8", errors="replace")
+        self._content_cache[key] = (mtime, content)
+        return content
     
     def load_skills_for_context(self, skill_names: list[str]) -> str:
         """
@@ -210,19 +228,30 @@ class SkillsLoader:
         Returns:
             Metadata dict or None.
         """
-        content = self.load_skill(name)
-        if not content:
+        path = self.resolve_skill_path(name)
+        if not path:
             return None
-        
+
+        key = str(path)
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            mtime = 0.0
+
+        cached = self._metadata_cache.get(key)
+        if cached and cached[0] == mtime:
+            return cached[1]
+
+        content = path.read_text(encoding="utf-8", errors="replace")
+        metadata: dict[str, str] = {}
         if content.startswith("---"):
             match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
             if match:
                 # Simple YAML parsing
-                metadata = {}
                 for line in match.group(1).split("\n"):
                     if ":" in line:
-                        key, value = line.split(":", 1)
-                        metadata[key.strip()] = value.strip().strip('"\'')
-                return metadata
-        
-        return None
+                        key_part, value = line.split(":", 1)
+                        metadata[key_part.strip()] = value.strip().strip('"\'')
+
+        self._metadata_cache[key] = (mtime, metadata)
+        return metadata or None

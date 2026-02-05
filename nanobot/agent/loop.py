@@ -39,22 +39,37 @@ class AgentLoop:
         provider: LLMProvider,
         workspace: Path,
         model: str | None = None,
-        max_iterations: int = 20,
+        max_iterations: int | None = None,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         allowed_tools: list[str] | None = None,
+        agent_config: "AgentDefaults | None" = None,
     ):
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import ExecToolConfig, AgentDefaults
         self.bus = bus
         self.provider = provider
         self.workspace = workspace
-        self.model = model or provider.get_default_model()
-        self.max_iterations = max_iterations
+        cfg = agent_config or AgentDefaults()
+        self.model = model or cfg.model or provider.get_default_model()
+        self.max_iterations = max_iterations if max_iterations is not None else cfg.max_tool_iterations
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.allowed_tools = allowed_tools
+        self.max_tokens = cfg.max_tokens
+        self.temperature = cfg.temperature
+        self.tool_error_backoff = max(int(cfg.tool_error_backoff), 0)
+        self.auto_tune_max_tokens = bool(cfg.auto_tune_max_tokens)
+        self.auto_tune_initial_max_tokens = cfg.initial_max_tokens
+        self.auto_tune_step = max(int(cfg.auto_tune_step), 1)
+        self.auto_tune_threshold = float(cfg.auto_tune_threshold)
+        self.auto_tune_streak = max(int(cfg.auto_tune_streak), 1)
         
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(
+            workspace,
+            memory_max_chars=cfg.memory_max_chars,
+            skills_max_chars=cfg.skills_max_chars,
+            bootstrap_max_chars=cfg.bootstrap_max_chars,
+        )
         self.sessions = SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -107,6 +122,67 @@ class AgentLoop:
         # Spawn tool (for subagents)
         spawn_tool = SpawnTool(manager=self.subagents)
         self.tools.register(spawn_tool)
+
+    def _is_tool_error(self, result: str) -> bool:
+        return result.strip().lower().startswith("error:")
+
+    def _get_session_max_tokens(self, session: "Session") -> int:
+        if not self.auto_tune_max_tokens:
+            return self.max_tokens
+        override = session.metadata.get("max_tokens_override")
+        if isinstance(override, int) and override > 0:
+            return min(override, self.max_tokens)
+        initial = self.auto_tune_initial_max_tokens or self.max_tokens
+        return min(int(initial), self.max_tokens)
+
+    def _record_usage(self, session: "Session", usage: dict[str, int], max_tokens_used: int) -> None:
+        if not usage:
+            return
+        record = {
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "max_tokens": max_tokens_used,
+        }
+        history = session.metadata.get("usage_history") or []
+        if not isinstance(history, list):
+            history = []
+        history.append(record)
+        if len(history) > 20:
+            history = history[-20:]
+        session.metadata["usage_history"] = history
+
+        prompt_tokens = usage.get("prompt_tokens") or 0
+        peak = session.metadata.get("prompt_tokens_peak") or 0
+        if prompt_tokens > peak:
+            session.metadata["prompt_tokens_peak"] = prompt_tokens
+            if peak and prompt_tokens > int(peak * 1.5) and prompt_tokens > 2000:
+                logger.warning(
+                    f"Prompt tokens spike: {prompt_tokens} (previous peak {peak})"
+                )
+
+    def _maybe_autotune_max_tokens(
+        self,
+        session: "Session",
+        completion_tokens: int | None,
+        max_tokens_used: int,
+    ) -> None:
+        if not self.auto_tune_max_tokens or not completion_tokens:
+            return
+        threshold = int(max_tokens_used * self.auto_tune_threshold)
+        streak = session.metadata.get("token_tune_streak") or 0
+        if completion_tokens >= threshold:
+            streak += 1
+        else:
+            streak = 0
+
+        if streak >= self.auto_tune_streak:
+            new_max = min(self.max_tokens, max_tokens_used + self.auto_tune_step)
+            if new_max > max_tokens_used:
+                session.metadata["max_tokens_override"] = new_max
+            streak = 0
+
+        session.metadata["token_tune_streak"] = streak
     
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
@@ -142,7 +218,11 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
     
-    async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
+    async def _process_message(
+        self,
+        msg: InboundMessage,
+        session_key_override: str | None = None
+    ) -> OutboundMessage | None:
         """
         Process a single inbound message.
         
@@ -160,7 +240,8 @@ class AgentLoop:
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}")
         
         # Get or create session
-        session = self.sessions.get_or_create(msg.session_key)
+        session_key = session_key_override or msg.session_key
+        session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
         self.tools.set_allowed_tools(allowed_tools)
         
@@ -183,16 +264,23 @@ class AgentLoop:
         # Agent loop
         iteration = 0
         final_content = None
+        tool_error_streak = 0
         
         while iteration < self.max_iterations:
             iteration += 1
-            
+
+            max_tokens_used = self._get_session_max_tokens(session)
+
             # Call LLM
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=self.model
+                model=self.model,
+                max_tokens=max_tokens_used,
+                temperature=self.temperature,
             )
+
+            self._record_usage(session, response.usage, max_tokens_used)
             
             # Handle tool calls
             if response.has_tool_calls:
@@ -214,6 +302,7 @@ class AgentLoop:
                 )
                 
                 # Execute tools
+                abort_loop = False
                 for tool_call in response.tool_calls:
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
@@ -222,9 +311,28 @@ class AgentLoop:
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    if self.tool_error_backoff > 0:
+                        if self._is_tool_error(result):
+                            tool_error_streak += 1
+                        else:
+                            tool_error_streak = 0
+                        if tool_error_streak >= self.tool_error_backoff:
+                            final_content = (
+                                "I'm hitting repeated tool errors. "
+                                "Please rephrase or provide more specific inputs."
+                            )
+                            abort_loop = True
+                            break
+                if abort_loop:
+                    break
             else:
                 # No tool calls, we're done
                 final_content = response.content
+                self._maybe_autotune_max_tokens(
+                    session,
+                    response.usage.get("completion_tokens") if response.usage else None,
+                    max_tokens_used,
+                )
                 break
         
         if final_content is None:
@@ -284,15 +392,21 @@ class AgentLoop:
         # Agent loop (limited for announce handling)
         iteration = 0
         final_content = None
+        tool_error_streak = 0
         
         while iteration < self.max_iterations:
             iteration += 1
             
+            max_tokens_used = self._get_session_max_tokens(session)
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
-                model=self.model
+                model=self.model,
+                max_tokens=max_tokens_used,
+                temperature=self.temperature,
             )
+
+            self._record_usage(session, response.usage, max_tokens_used)
             
             if response.has_tool_calls:
                 tool_call_dicts = [
@@ -310,6 +424,7 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts
                 )
                 
+                abort_loop = False
                 for tool_call in response.tool_calls:
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
@@ -318,8 +433,27 @@ class AgentLoop:
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    if self.tool_error_backoff > 0:
+                        if self._is_tool_error(result):
+                            tool_error_streak += 1
+                        else:
+                            tool_error_streak = 0
+                        if tool_error_streak >= self.tool_error_backoff:
+                            final_content = (
+                                "Background task hit repeated tool errors. "
+                                "Please rephrase or provide more specific inputs."
+                            )
+                            abort_loop = True
+                            break
+                if abort_loop:
+                    break
             else:
                 final_content = response.content
+                self._maybe_autotune_max_tokens(
+                    session,
+                    response.usage.get("completion_tokens") if response.usage else None,
+                    max_tokens_used,
+                )
                 break
         
         if final_content is None:
@@ -354,5 +488,5 @@ class AgentLoop:
             content=content
         )
         
-        response = await self._process_message(msg)
+        response = await self._process_message(msg, session_key_override=session_key)
         return response.content if response else ""

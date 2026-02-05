@@ -19,10 +19,20 @@ class ContextBuilder:
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
     
-    def __init__(self, workspace: Path):
+    def __init__(
+        self,
+        workspace: Path,
+        memory_max_chars: int = 6000,
+        skills_max_chars: int = 12000,
+        bootstrap_max_chars: int = 4000,
+    ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self.memory_max_chars = max(int(memory_max_chars), 0)
+        self.skills_max_chars = max(int(skills_max_chars), 0)
+        self.bootstrap_max_chars = max(int(bootstrap_max_chars), 0)
+        self._cache: dict[str, tuple[tuple, str]] = {}
     
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
@@ -35,38 +45,15 @@ class ContextBuilder:
             Complete system prompt.
         """
         parts = []
-        
-        # Core identity
+
+        # Core identity (always fresh for current time)
         parts.append(self._get_identity())
-        
-        # Bootstrap files
-        bootstrap = self._load_bootstrap_files()
-        if bootstrap:
-            parts.append(bootstrap)
-        
-        # Memory context
-        memory = self.memory.get_memory_context()
-        if memory:
-            parts.append(f"# Memory\n\n{memory}")
-        
-        # Skills - progressive loading
-        # 1. Always-loaded skills: include full content
-        always_skills = self.skills.get_always_skills()
-        if always_skills:
-            always_content = self.skills.load_skills_for_context(always_skills)
-            if always_content:
-                parts.append(f"# Active Skills\n\n{always_content}")
-        
-        # 2. Available skills: only show summary (agent uses read_file to load)
-        skills_summary = self.skills.build_skills_summary()
-        if skills_summary:
-            parts.append(f"""# Skills
 
-The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
-Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+        # Cached prompt tail (bootstrap, memory, skills)
+        tail = self._get_prompt_tail()
+        if tail:
+            parts.append(tail)
 
-{skills_summary}""")
-        
         return "\n\n---\n\n".join(parts)
     
     def _get_identity(self) -> str:
@@ -100,17 +87,172 @@ For normal conversation, just respond with text - do not call the message tool.
 Always be helpful, accurate, and concise. When using tools, explain what you're doing.
 When remembering something, write to {workspace_path}/memory/MEMORY.md"""
     
-    def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
-        parts = []
-        
+    def _get_cached(self, key: str, signature: tuple) -> str | None:
+        cached = self._cache.get(key)
+        if cached and cached[0] == signature:
+            return cached[1]
+        return None
+
+    def _set_cache(self, key: str, signature: tuple, value: str) -> None:
+        self._cache[key] = (signature, value)
+
+    def _truncate_tail(self, text: str, max_chars: int, label: str) -> str:
+        if max_chars <= 0:
+            return ""
+        if len(text) <= max_chars:
+            return text
+        return f"[truncated {label} to last {max_chars} chars]\n" + text[-max_chars:]
+
+    def _get_bootstrap_content(self) -> str:
+        """Load bootstrap files from workspace with caching and truncation."""
+        files: list[tuple[str, float]] = []
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
             if file_path.exists():
-                content = file_path.read_text(encoding="utf-8")
+                try:
+                    mtime = file_path.stat().st_mtime
+                except Exception:
+                    mtime = 0.0
+                files.append((str(file_path), mtime))
+
+        signature = (tuple(files), self.bootstrap_max_chars)
+        cached = self._get_cached("bootstrap", signature)
+        if cached is not None:
+            return cached
+
+        parts = []
+        for filename in self.BOOTSTRAP_FILES:
+            file_path = self.workspace / filename
+            if file_path.exists():
+                content = file_path.read_text(encoding="utf-8", errors="replace")
                 parts.append(f"## {filename}\n\n{content}")
-        
-        return "\n\n".join(parts) if parts else ""
+
+        text = "\n\n".join(parts) if parts else ""
+        if text:
+            text = self._truncate_tail(text, self.bootstrap_max_chars, "bootstrap")
+
+        self._set_cache("bootstrap", signature, text)
+        return text
+
+    def _get_memory_context(self) -> str:
+        """Load memory context with caching and truncation."""
+        long_term = self.memory.memory_file
+        today = self.memory.get_today_file()
+
+        def _mtime(path: Path) -> float:
+            try:
+                return path.stat().st_mtime if path.exists() else 0.0
+            except Exception:
+                return 0.0
+
+        signature = ((str(long_term), _mtime(long_term)), (str(today), _mtime(today)),
+                     self.memory_max_chars)
+        cached = self._get_cached("memory", signature)
+        if cached is not None:
+            return cached
+
+        memory = self.memory.get_memory_context()
+        if memory:
+            memory = self._truncate_tail(memory, self.memory_max_chars, "memory")
+
+        self._set_cache("memory", signature, memory)
+        return memory
+
+    def _get_skills_summary(self) -> str:
+        """Build skills summary with caching by file mtimes."""
+        skills = self.skills.list_skills(filter_unavailable=False)
+        files: list[tuple[str, float]] = []
+        for s in skills:
+            path = Path(s["path"])
+            try:
+                mtime = path.stat().st_mtime
+            except Exception:
+                mtime = 0.0
+            files.append((str(path), mtime))
+
+        signature = (tuple(files),)
+        cached = self._get_cached("skills_summary", signature)
+        if cached is not None:
+            return cached
+
+        summary = self.skills.build_skills_summary()
+        self._set_cache("skills_summary", signature, summary)
+        return summary
+
+    def _get_always_skills_content(self) -> str:
+        """Load always-on skills with caching by file mtimes."""
+        always_skills = self.skills.get_always_skills()
+        files: list[tuple[str, float]] = []
+        for name in always_skills:
+            path = self.skills.resolve_skill_path(name)
+            if not path:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except Exception:
+                mtime = 0.0
+            files.append((name, str(path), mtime))
+
+        signature = (tuple(files),)
+        cached = self._get_cached("always_skills", signature)
+        if cached is not None:
+            return cached
+
+        content = self.skills.load_skills_for_context(always_skills) if always_skills else ""
+        self._set_cache("always_skills", signature, content)
+        return content
+
+    def _get_skills_section(self) -> str:
+        """Build full skills section with truncation and caching."""
+        always_content = self._get_always_skills_content()
+        skills_summary = self._get_skills_summary()
+
+        signature = (hash(always_content), hash(skills_summary), self.skills_max_chars)
+        cached = self._get_cached("skills_section", signature)
+        if cached is not None:
+            return cached
+
+        parts = []
+        if always_content:
+            parts.append(f"# Active Skills\n\n{always_content}")
+
+        if skills_summary:
+            parts.append(f"""# Skills
+
+The following skills extend your capabilities. To use a skill, read its SKILL.md file using the read_file tool.
+Skills with available="false" need dependencies installed first - you can try installing them with apt/brew.
+
+{skills_summary}""")
+
+        text = "\n\n---\n\n".join(parts) if parts else ""
+        if text:
+            text = self._truncate_tail(text, self.skills_max_chars, "skills")
+
+        self._set_cache("skills_section", signature, text)
+        return text
+
+    def _get_prompt_tail(self) -> str:
+        """Build the system prompt tail (everything except identity)."""
+        bootstrap = self._get_bootstrap_content()
+        memory = self._get_memory_context()
+        skills_section = self._get_skills_section()
+
+        signature = (hash(bootstrap), hash(memory), hash(skills_section))
+        cached = self._get_cached("prompt_tail", signature)
+        if cached is not None:
+            return cached
+
+        parts = []
+        if bootstrap:
+            parts.append(bootstrap)
+        if memory:
+            parts.append(f"# Memory\n\n{memory}")
+        if skills_section:
+            parts.append(skills_section)
+
+        tail = "\n\n---\n\n".join(parts)
+        self._set_cache("prompt_tail", signature, tail)
+        return tail
     
     def build_messages(
         self,

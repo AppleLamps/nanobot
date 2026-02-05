@@ -17,6 +17,7 @@ class BaseChannel(ABC):
     """
     
     name: str = "base"
+    max_message_chars: int | None = None
     
     def __init__(self, config: Any, bus: MessageBus):
         """
@@ -58,6 +59,24 @@ class BaseChannel(ABC):
             msg: The message to send.
         """
         pass
+
+    def _split_content(self, content: str) -> list[str]:
+        """Split content into chunks suitable for the channel."""
+        max_len = self.max_message_chars or 0
+        if max_len <= 0 or len(content) <= max_len:
+            return [content]
+
+        chunks: list[str] = []
+        start = 0
+        while start < len(content):
+            end = min(start + max_len, len(content))
+            if end < len(content):
+                split = content.rfind("\n", start, end)
+                if split != -1 and split > start + int(max_len * 0.5):
+                    end = split + 1
+            chunks.append(content[start:end])
+            start = end
+        return chunks
     
     def is_allowed(self, sender_id: str) -> bool:
         """

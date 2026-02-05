@@ -202,6 +202,7 @@ def gateway(
         workspace=config.workspace_path,
         model=config.agents.defaults.model,
         max_iterations=config.agents.defaults.max_tool_iterations,
+        agent_config=config.agents.defaults,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
         allowed_tools=config.tools.allowed_tools,
@@ -314,6 +315,7 @@ def agent(
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
         allowed_tools=config.tools.allowed_tools,
+        agent_config=config.agents.defaults,
     )
     
     if message:

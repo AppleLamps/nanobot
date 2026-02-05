@@ -47,6 +47,18 @@ class AgentDefaults(BaseModel):
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20
+    # Prompt budgets (characters; sliding-window truncation)
+    memory_max_chars: int = 6000
+    skills_max_chars: int = 12000
+    bootstrap_max_chars: int = 4000
+    # Tool error backoff
+    tool_error_backoff: int = 3
+    # Auto-tune response length
+    auto_tune_max_tokens: bool = False
+    initial_max_tokens: int | None = None
+    auto_tune_step: int = 512
+    auto_tune_threshold: float = 0.85
+    auto_tune_streak: int = 3
 
 
 class AgentsConfig(BaseModel):

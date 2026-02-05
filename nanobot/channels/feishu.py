@@ -51,6 +51,7 @@ class FeishuChannel(BaseChannel):
     """
     
     name = "feishu"
+    max_message_chars = 3000
     
     def __init__(self, config: FeishuConfig, bus: MessageBus):
         super().__init__(config, bus)
@@ -162,39 +163,38 @@ class FeishuChannel(BaseChannel):
             logger.warning("Feishu client not initialized")
             return
         
-        try:
-            # Determine receive_id_type based on chat_id format
-            # open_id starts with "ou_", chat_id starts with "oc_"
-            if msg.chat_id.startswith("oc_"):
-                receive_id_type = "chat_id"
-            else:
-                receive_id_type = "open_id"
-            
-            # Build text message content
-            content = json.dumps({"text": msg.content})
-            
-            request = CreateMessageRequest.builder() \
-                .receive_id_type(receive_id_type) \
-                .request_body(
-                    CreateMessageRequestBody.builder()
-                    .receive_id(msg.chat_id)
-                    .msg_type("text")
-                    .content(content)
-                    .build()
-                ).build()
-            
-            response = self._client.im.v1.message.create(request)
-            
-            if not response.success():
-                logger.error(
-                    f"Failed to send Feishu message: code={response.code}, "
-                    f"msg={response.msg}, log_id={response.get_log_id()}"
-                )
-            else:
-                logger.debug(f"Feishu message sent to {msg.chat_id}")
-                
-        except Exception as e:
-            logger.error(f"Error sending Feishu message: {e}")
+        # Determine receive_id_type based on chat_id format
+        # open_id starts with "ou_", chat_id starts with "oc_"
+        if msg.chat_id.startswith("oc_"):
+            receive_id_type = "chat_id"
+        else:
+            receive_id_type = "open_id"
+
+        for chunk in self._split_content(msg.content):
+            try:
+                content = json.dumps({"text": chunk})
+                request = CreateMessageRequest.builder() \
+                    .receive_id_type(receive_id_type) \
+                    .request_body(
+                        CreateMessageRequestBody.builder()
+                        .receive_id(msg.chat_id)
+                        .msg_type("text")
+                        .content(content)
+                        .build()
+                    ).build()
+
+                response = self._client.im.v1.message.create(request)
+
+                if not response.success():
+                    logger.error(
+                        f"Failed to send Feishu message: code={response.code}, "
+                        f"msg={response.msg}, log_id={response.get_log_id()}"
+                    )
+                else:
+                    logger.debug(f"Feishu message sent to {msg.chat_id}")
+
+            except Exception as e:
+                logger.error(f"Error sending Feishu message: {e}")
     
     def _on_message_sync(self, data: "P2ImMessageReceiveV1") -> None:
         """
