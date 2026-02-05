@@ -1,6 +1,7 @@
 """Base channel interface for chat platforms."""
 
 from abc import ABC, abstractmethod
+import time
 from typing import Any
 
 from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -28,6 +29,8 @@ class BaseChannel(ABC):
         self.config = config
         self.bus = bus
         self._running = False
+        self._rate_limit_s = max(int(getattr(config, "rate_limit_s", 0) or 0), 0)
+        self._last_seen: dict[str, float] = {}
     
     @abstractmethod
     async def start(self) -> None:
@@ -103,6 +106,13 @@ class BaseChannel(ABC):
         """
         if not self.is_allowed(sender_id):
             return
+
+        if self._rate_limit_s > 0:
+            now = time.monotonic()
+            last_seen = self._last_seen.get(sender_id)
+            if last_seen is not None and (now - last_seen) < self._rate_limit_s:
+                return
+            self._last_seen[sender_id] = now
         
         msg = InboundMessage(
             channel=self.name,

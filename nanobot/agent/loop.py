@@ -42,6 +42,7 @@ class AgentLoop:
         max_iterations: int = 20,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
+        allowed_tools: list[str] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.bus = bus
@@ -51,6 +52,7 @@ class AgentLoop:
         self.max_iterations = max_iterations
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
+        self.allowed_tools = allowed_tools
         
         self.context = ContextBuilder(workspace)
         self.sessions = SessionManager(workspace)
@@ -70,10 +72,22 @@ class AgentLoop:
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         # File tools
-        self.tools.register(ReadFileTool())
-        self.tools.register(WriteFileTool())
-        self.tools.register(EditFileTool())
-        self.tools.register(ListDirTool())
+        self.tools.register(ReadFileTool(
+            workspace_root=self.workspace,
+            restrict_to_workspace=self.exec_config.restrict_to_workspace,
+        ))
+        self.tools.register(WriteFileTool(
+            workspace_root=self.workspace,
+            restrict_to_workspace=self.exec_config.restrict_to_workspace,
+        ))
+        self.tools.register(EditFileTool(
+            workspace_root=self.workspace,
+            restrict_to_workspace=self.exec_config.restrict_to_workspace,
+        ))
+        self.tools.register(ListDirTool(
+            workspace_root=self.workspace,
+            restrict_to_workspace=self.exec_config.restrict_to_workspace,
+        ))
         
         # Shell tool
         self.tools.register(ExecTool(
@@ -147,6 +161,8 @@ class AgentLoop:
         
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
+        allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
+        self.tools.set_allowed_tools(allowed_tools)
         
         # Update tool contexts
         message_tool = self.tools.get("message")
@@ -180,6 +196,7 @@ class AgentLoop:
             
             # Handle tool calls
             if response.has_tool_calls:
+                # Tool loop: append assistant tool calls, execute tools, add tool results, then continue.
                 # Add assistant message with tool calls
                 tool_call_dicts = [
                     {
@@ -245,6 +262,8 @@ class AgentLoop:
         # Use the origin session for context
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
+        allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
+        self.tools.set_allowed_tools(allowed_tools)
         
         # Update tool contexts
         message_tool = self.tools.get("message")
