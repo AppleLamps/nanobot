@@ -46,6 +46,10 @@ class Session:
         Returns:
             List of messages in LLM format.
         """
+        if max_messages > 0 and len(self.messages) > max_messages * 2:
+            self.messages = self.messages[-max_messages * 2 :]
+            self.updated_at = datetime.now()
+
         # Get recent messages
         recent = self.messages[-max_messages:] if len(self.messages) > max_messages else self.messages
         
