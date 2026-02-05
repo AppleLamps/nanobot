@@ -19,7 +19,7 @@ class Session:
     Stores messages in JSONL format for easy reading and persistence.
     """
 
-    HISTORY_RETENTION_MULTIPLIER = 2
+    HISTORY_RETENTION_MULTIPLIER = 2  # Retain extra messages beyond the context window.
     
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
