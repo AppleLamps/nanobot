@@ -62,6 +62,15 @@ class BaseChannel(ABC):
 
     def _split_content(self, content: str) -> list[str]:
         """Split content into chunks suitable for the channel."""
+        # Some upstream paths can legitimately produce an empty/whitespace-only response
+        # (e.g. tool-only turns, failed deliveries, etc.). Most chat APIs reject those.
+        if content is None:
+            return []
+        if not isinstance(content, str):
+            content = str(content)
+        if not content.strip():
+            return []
+
         max_len = self.max_message_chars or 0
         if max_len <= 0 or len(content) <= max_len:
             return [content]

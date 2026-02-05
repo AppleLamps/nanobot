@@ -82,13 +82,28 @@ class FeishuChannel(BaseChannel):
             .log_level(lark.LogLevel.INFO) \
             .build()
         
-        # Create event handler (only register message receive, ignore other events)
-        event_handler = lark.EventDispatcherHandler.builder(
-            self.config.encrypt_key or "",
-            self.config.verification_token or "",
-        ).register_p2_im_message_receive_v1(
-            self._on_message_sync
-        ).build()
+        # Create event handler (only register message receive, ignore other events).
+        # Feishu long-connection mode does not require encryptKey/verificationToken, and
+        # some SDK versions treat empty strings as "configured but invalid".
+        encrypt_key = (self.config.encrypt_key or "").strip()
+        verification_token = (self.config.verification_token or "").strip()
+        try:
+            event_handler_builder = lark.EventDispatcherHandler.builder(
+                encrypt_key if encrypt_key else None,
+                verification_token if verification_token else None,
+            )
+        except TypeError:
+            # Fallback for SDKs that don't accept None.
+            event_handler_builder = lark.EventDispatcherHandler.builder(
+                encrypt_key or "",
+                verification_token or "",
+            )
+
+        event_handler = (
+            event_handler_builder
+            .register_p2_im_message_receive_v1(self._on_message_sync)
+            .build()
+        )
         
         # Create WebSocket client for long connection
         self._ws_client = lark.ws.Client(
@@ -104,6 +119,8 @@ class FeishuChannel(BaseChannel):
                 self._ws_client.start()
             except Exception as e:
                 logger.error(f"Feishu WebSocket error: {e}")
+                # If the WS loop fails immediately (often config/credentials), reflect that.
+                self._running = False
         
         self._ws_thread = threading.Thread(target=run_ws, daemon=True)
         self._ws_thread.start()

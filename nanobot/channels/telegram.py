@@ -160,13 +160,20 @@ class TelegramChannel(BaseChannel):
 
         try:
             chat_id = int(msg.chat_id)
-        except ValueError:
+        except (ValueError, TypeError):
             logger.error(f"Invalid chat_id: {msg.chat_id}")
             return
 
         for chunk in self._split_content(msg.content):
+            if not chunk.strip():
+                # Avoid Telegram "Message text is empty" errors.
+                continue
             try:
                 html_content = _markdown_to_telegram_html(chunk)
+                if not html_content or not html_content.strip():
+                    # Defensive: markdown conversion should not erase content, but if it
+                    # does, fall back to plain text rather than sending an empty message.
+                    html_content = chunk
                 await self._app.bot.send_message(
                     chat_id=chat_id,
                     text=html_content,
@@ -175,6 +182,8 @@ class TelegramChannel(BaseChannel):
             except Exception as e:
                 logger.warning(f"HTML parse failed, falling back to plain text: {e}")
                 try:
+                    if not chunk.strip():
+                        continue
                     await self._app.bot.send_message(
                         chat_id=chat_id,
                         text=chunk

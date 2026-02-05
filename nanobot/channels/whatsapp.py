@@ -28,12 +28,21 @@ class WhatsAppChannel(BaseChannel):
         self.config: WhatsAppConfig = config
         self._ws = None
         self._connected = False
+        self._warned_unreachable_bridge = False
+
+    def _normalize_bridge_url(self, url: str) -> str:
+        url = (url or "").strip()
+        if not url:
+            return "ws://localhost:3001"
+        if "://" not in url:
+            return f"ws://{url}"
+        return url
     
     async def start(self) -> None:
         """Start the WhatsApp channel by connecting to the bridge."""
         import websockets
         
-        bridge_url = self.config.bridge_url
+        bridge_url = self._normalize_bridge_url(self.config.bridge_url)
         
         logger.info(f"Connecting to WhatsApp bridge at {bridge_url}...")
         
@@ -41,24 +50,44 @@ class WhatsAppChannel(BaseChannel):
         
         while self._running:
             try:
-                async with websockets.connect(bridge_url) as ws:
+                async with websockets.connect(
+                    bridge_url,
+                    open_timeout=10,
+                    close_timeout=10,
+                    ping_interval=20,
+                    ping_timeout=20,
+                ) as ws:
                     self._ws = ws
                     self._connected = True
+                    self._warned_unreachable_bridge = False
                     logger.info("Connected to WhatsApp bridge")
-                    
-                    # Listen for messages
-                    async for message in ws:
-                        try:
-                            await self._handle_bridge_message(message)
-                        except Exception as e:
-                            logger.error(f"Error handling bridge message: {e}")
-                    
+
+                    try:
+                        # Listen for messages until the socket closes.
+                        async for message in ws:
+                            try:
+                                await self._handle_bridge_message(message)
+                            except Exception as e:
+                                logger.error(f"Error handling bridge message: {e}")
+                    finally:
+                        # Ensure state is consistent even on clean close (no exception).
+                        self._connected = False
+                        self._ws = None
+
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 self._connected = False
                 self._ws = None
                 logger.warning(f"WhatsApp bridge connection error: {e}")
+
+                if not self._warned_unreachable_bridge and "localhost" in bridge_url:
+                    self._warned_unreachable_bridge = True
+                    logger.warning(
+                        "If this keeps failing, make sure the WhatsApp bridge is running "
+                        "(run `nanobot channels login` in another terminal), and that "
+                        f"`channels.whatsapp.bridgeUrl` points to the bridge (currently {bridge_url})."
+                    )
                 
                 if self._running:
                     logger.info("Reconnecting in 5 seconds...")
@@ -81,6 +110,8 @@ class WhatsAppChannel(BaseChannel):
         
         for chunk in self._split_content(msg.content):
             try:
+                if not chunk.strip():
+                    continue
                 payload = {
                     "type": "send",
                     "to": msg.chat_id,
