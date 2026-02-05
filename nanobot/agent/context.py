@@ -18,6 +18,9 @@ class ContextBuilder:
     """
     
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    TOOL_RESULT_MAX_CHARS = 4000
+    TOOL_RESULT_HEAD_CHARS = 2000
+    TOOL_RESULT_TAIL_CHARS = 800
     
     def __init__(self, workspace: Path):
         self.workspace = workspace
@@ -187,9 +190,27 @@ When remembering something, write to {workspace_path}/memory/MEMORY.md"""
             "role": "tool",
             "tool_call_id": tool_call_id,
             "name": tool_name,
-            "content": result
+            "content": self.summarize_tool_result(result)
         })
         return messages
+
+    def summarize_tool_result(self, result: str) -> str:
+        """Summarize or truncate long tool results to reduce context bloat."""
+        if not isinstance(result, str):
+            result = str(result)
+
+        max_chars = self.TOOL_RESULT_MAX_CHARS
+        if len(result) <= max_chars:
+            return result
+
+        head = result[:self.TOOL_RESULT_HEAD_CHARS]
+        tail = result[-self.TOOL_RESULT_TAIL_CHARS:]
+        truncated = len(result) - len(head) - len(tail)
+        return (
+            f"{head}\n\n"
+            f"...[truncated {truncated} chars]...\n\n"
+            f"{tail}"
+        )
     
     def add_assistant_message(
         self,

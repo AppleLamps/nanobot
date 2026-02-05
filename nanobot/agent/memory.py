@@ -53,12 +53,13 @@ class MemoryStore:
         """Write to long-term memory (MEMORY.md)."""
         self.memory_file.write_text(content, encoding="utf-8")
     
-    def get_recent_memories(self, days: int = 7) -> str:
+    def get_recent_memories(self, days: int = 7, include_today: bool = False) -> str:
         """
         Get memories from the last N days.
         
         Args:
             days: Number of days to look back.
+            include_today: Whether to include today's memory file.
         
         Returns:
             Combined memory content.
@@ -68,7 +69,8 @@ class MemoryStore:
         memories = []
         today = datetime.now().date()
         
-        for i in range(days):
+        start = 0 if include_today else 1
+        for i in range(start, days + start):
             date = today - timedelta(days=i)
             date_str = date.strftime("%Y-%m-%d")
             file_path = self.memory_dir / f"{date_str}.md"
@@ -105,5 +107,10 @@ class MemoryStore:
         today = self.read_today()
         if today:
             parts.append("## Today's Notes\n" + today)
+
+        # Recent memories (excluding today to avoid duplication)
+        recent = self.get_recent_memories(days=7, include_today=False)
+        if recent:
+            parts.append("## Recent Memories (Last 7 Days)\n" + recent)
         
         return "\n\n".join(parts) if parts else ""

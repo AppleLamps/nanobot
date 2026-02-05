@@ -40,6 +40,11 @@ class AgentLoop:
         workspace: Path,
         model: str | None = None,
         max_iterations: int = 20,
+        max_tool_calls: int = 40,
+        max_no_progress: int = 3,
+        tool_retry_attempts: int = 2,
+        tool_retry_backoff: float = 0.5,
+        enable_planning: bool = True,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
         allowed_tools: list[str] | None = None,
@@ -50,6 +55,11 @@ class AgentLoop:
         self.workspace = workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
+        self.max_tool_calls = max_tool_calls
+        self.max_no_progress = max_no_progress
+        self.tool_retry_attempts = tool_retry_attempts
+        self.tool_retry_backoff = tool_retry_backoff
+        self.enable_planning = enable_planning
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.allowed_tools = allowed_tools
@@ -136,6 +146,55 @@ class AgentLoop:
                     ))
             except asyncio.TimeoutError:
                 continue
+
+    async def _build_plan(self, messages: list[dict[str, Any]]) -> str | None:
+        """Generate a brief plan before tool execution."""
+        if not self.enable_planning:
+            return None
+
+        plan_messages = list(messages)
+        plan_messages.append({
+            "role": "system",
+            "content": (
+                "Before using any tools, write a brief plan (bullet list). "
+                "Do not call tools."
+            )
+        })
+
+        try:
+            response = await self.provider.chat(
+                messages=plan_messages,
+                tools=[],
+                model=self.model
+            )
+        except Exception as e:
+            logger.warning(f"Planning step failed: {e}")
+            return None
+
+        if response.content:
+            return response.content.strip()
+        return None
+
+    async def _execute_tool_with_retries(self, tool_call) -> str:
+        """Execute a tool with bounded retries and structured error output."""
+        last_error = ""
+        for attempt in range(1, self.tool_retry_attempts + 1):
+            try:
+                return await self.tools.execute(tool_call.name, tool_call.arguments)
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(
+                    f"Tool {tool_call.name} failed (attempt {attempt}/{self.tool_retry_attempts}): {e}"
+                )
+                if attempt < self.tool_retry_attempts:
+                    await asyncio.sleep(self.tool_retry_backoff * attempt)
+
+        return (
+            "[tool_error]\n"
+            f"Tool '{tool_call.name}' failed after {self.tool_retry_attempts} attempts.\n"
+            f"Error: {last_error}\n"
+            "Hint: check input arguments, permissions, or try an alternative approach."
+        )
     
     def stop(self) -> None:
         """Stop the agent loop."""
@@ -179,10 +238,17 @@ class AgentLoop:
             current_message=msg.content,
             media=msg.media if msg.media else None,
         )
+
+        plan = await self._build_plan(messages)
+        if plan:
+            messages = self.context.add_assistant_message(messages, f"Plan:\n{plan}")
         
         # Agent loop
         iteration = 0
         final_content = None
+        tool_calls_executed = 0
+        no_progress_iterations = 0
+        last_tool_signature: list[tuple[str, str]] | None = None
         
         while iteration < self.max_iterations:
             iteration += 1
@@ -196,6 +262,23 @@ class AgentLoop:
             
             # Handle tool calls
             if response.has_tool_calls:
+                tool_signature = [
+                    (tc.name, json.dumps(tc.arguments, sort_keys=True))
+                    for tc in response.tool_calls
+                ]
+                if tool_signature == last_tool_signature:
+                    no_progress_iterations += 1
+                else:
+                    no_progress_iterations = 0
+                last_tool_signature = tool_signature
+
+                if no_progress_iterations >= self.max_no_progress:
+                    final_content = (
+                        "I seem to be repeating tool calls without making progress. "
+                        "Please clarify or rephrase the request."
+                    )
+                    break
+
                 # Tool loop: append assistant tool calls, execute tools, add tool results, then continue.
                 # Add assistant message with tool calls
                 tool_call_dicts = [
@@ -214,13 +297,24 @@ class AgentLoop:
                 )
                 
                 # Execute tools
+                budget_exhausted = False
                 for tool_call in response.tool_calls:
+                    if tool_calls_executed >= self.max_tool_calls:
+                        final_content = (
+                            "Stopped due to tool budget limits. "
+                            "Please narrow the request or provide more constraints."
+                        )
+                        budget_exhausted = True
+                        break
                     args_str = json.dumps(tool_call.arguments)
                     logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    result = await self._execute_tool_with_retries(tool_call)
+                    tool_calls_executed += 1
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                if budget_exhausted:
+                    break
             else:
                 # No tool calls, we're done
                 final_content = response.content
@@ -279,10 +373,17 @@ class AgentLoop:
             history=session.get_history(),
             current_message=msg.content
         )
+
+        plan = await self._build_plan(messages)
+        if plan:
+            messages = self.context.add_assistant_message(messages, f"Plan:\n{plan}")
         
         # Agent loop (limited for announce handling)
         iteration = 0
         final_content = None
+        tool_calls_executed = 0
+        no_progress_iterations = 0
+        last_tool_signature: list[tuple[str, str]] | None = None
         
         while iteration < self.max_iterations:
             iteration += 1
@@ -294,6 +395,23 @@ class AgentLoop:
             )
             
             if response.has_tool_calls:
+                tool_signature = [
+                    (tc.name, json.dumps(tc.arguments, sort_keys=True))
+                    for tc in response.tool_calls
+                ]
+                if tool_signature == last_tool_signature:
+                    no_progress_iterations += 1
+                else:
+                    no_progress_iterations = 0
+                last_tool_signature = tool_signature
+
+                if no_progress_iterations >= self.max_no_progress:
+                    final_content = (
+                        "Background task is repeating tool calls without progress. "
+                        "Please clarify or adjust the request."
+                    )
+                    break
+
                 tool_call_dicts = [
                     {
                         "id": tc.id,
@@ -309,13 +427,24 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts
                 )
                 
+                budget_exhausted = False
                 for tool_call in response.tool_calls:
                     args_str = json.dumps(tool_call.arguments)
                     logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                    if tool_calls_executed >= self.max_tool_calls:
+                        final_content = (
+                            "Stopped background task due to tool budget limits. "
+                            "Please narrow the request or provide more constraints."
+                        )
+                        budget_exhausted = True
+                        break
+                    result = await self._execute_tool_with_retries(tool_call)
+                    tool_calls_executed += 1
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                if budget_exhausted:
+                    break
             else:
                 final_content = response.content
                 break
