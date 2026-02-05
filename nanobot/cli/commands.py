@@ -204,6 +204,7 @@ def gateway(
         max_iterations=config.agents.defaults.max_tool_iterations,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
+        allowed_tools=config.tools.allowed_tools,
     )
     
     # Create cron service
@@ -312,6 +313,7 @@ def agent(
         workspace=config.workspace_path,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
+        allowed_tools=config.tools.allowed_tools,
     )
     
     if message:
@@ -348,6 +350,48 @@ def agent(
 
 channels_app = typer.Typer(help="Manage channels")
 app.add_typer(channels_app, name="channels")
+
+skills_app = typer.Typer(help="Manage skills")
+app.add_typer(skills_app, name="skills")
+
+
+@skills_app.command("init")
+def skills_init(
+    name: str = typer.Argument(..., help="Skill name (directory name)"),
+    description: str = typer.Option("", "--description", "-d", help="Short description"),
+):
+    """Create a new skill scaffold in the workspace."""
+    from nanobot.utils.helpers import get_skills_path
+
+    skills_dir = get_skills_path()
+    skill_dir = skills_dir / name
+    skill_file = skill_dir / "SKILL.md"
+
+    if skill_file.exists():
+        console.print(f"[red]Skill already exists at {skill_file}[/red]")
+        raise typer.Exit(1)
+
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    desc = description or name
+    content = f"""---
+description: "{desc}"
+---
+# {name}
+
+## Goal
+Describe what this skill helps the agent do.
+
+## When to use
+- Example: Use when the user asks for X.
+
+## Steps
+1. Step-by-step guidance for the agent.
+
+## Notes
+- Add any constraints, caveats, or examples.
+"""
+    skill_file.write_text(content, encoding="utf-8")
+    console.print(f"[green]✓[/green] Created skill at {skill_file}")
 
 
 @channels_app.command("status")

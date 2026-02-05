@@ -6,8 +6,28 @@ from typing import Any
 from nanobot.agent.tools.base import Tool
 
 
+def _resolve_path(
+    path: str,
+    workspace_root: Path | None,
+    restrict_to_workspace: bool,
+) -> tuple[Path | None, str | None]:
+    file_path = Path(path).expanduser()
+    if restrict_to_workspace and workspace_root is not None:
+        root = workspace_root.expanduser().resolve()
+        if not file_path.is_absolute():
+            file_path = root / file_path
+        resolved = file_path.resolve()
+        if root not in resolved.parents and resolved != root:
+            return None, f"Error: Path outside workspace: {path}"
+    return file_path, None
+
+
 class ReadFileTool(Tool):
     """Tool to read file contents."""
+
+    def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
+        self.workspace_root = workspace_root
+        self.restrict_to_workspace = restrict_to_workspace
     
     @property
     def name(self) -> str:
@@ -32,7 +52,13 @@ class ReadFileTool(Tool):
     
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
-            file_path = Path(path).expanduser()
+            file_path, error = _resolve_path(
+                path, self.workspace_root, self.restrict_to_workspace
+            )
+            if error:
+                return error
+            if file_path is None:
+                return f"Error: Invalid path: {path}"
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
@@ -48,6 +74,10 @@ class ReadFileTool(Tool):
 
 class WriteFileTool(Tool):
     """Tool to write content to a file."""
+
+    def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
+        self.workspace_root = workspace_root
+        self.restrict_to_workspace = restrict_to_workspace
     
     @property
     def name(self) -> str:
@@ -76,7 +106,13 @@ class WriteFileTool(Tool):
     
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
-            file_path = Path(path).expanduser()
+            file_path, error = _resolve_path(
+                path, self.workspace_root, self.restrict_to_workspace
+            )
+            if error:
+                return error
+            if file_path is None:
+                return f"Error: Invalid path: {path}"
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             return f"Successfully wrote {len(content)} bytes to {path}"
@@ -88,6 +124,10 @@ class WriteFileTool(Tool):
 
 class EditFileTool(Tool):
     """Tool to edit a file by replacing text."""
+
+    def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
+        self.workspace_root = workspace_root
+        self.restrict_to_workspace = restrict_to_workspace
     
     @property
     def name(self) -> str:
@@ -120,7 +160,13 @@ class EditFileTool(Tool):
     
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
-            file_path = Path(path).expanduser()
+            file_path, error = _resolve_path(
+                path, self.workspace_root, self.restrict_to_workspace
+            )
+            if error:
+                return error
+            if file_path is None:
+                return f"Error: Invalid path: {path}"
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             
@@ -146,6 +192,10 @@ class EditFileTool(Tool):
 
 class ListDirTool(Tool):
     """Tool to list directory contents."""
+
+    def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
+        self.workspace_root = workspace_root
+        self.restrict_to_workspace = restrict_to_workspace
     
     @property
     def name(self) -> str:
@@ -170,7 +220,13 @@ class ListDirTool(Tool):
     
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
-            dir_path = Path(path).expanduser()
+            dir_path, error = _resolve_path(
+                path, self.workspace_root, self.restrict_to_workspace
+            )
+            if error:
+                return error
+            if dir_path is None:
+                return f"Error: Invalid path: {path}"
             if not dir_path.exists():
                 return f"Error: Directory not found: {path}"
             if not dir_path.is_dir():

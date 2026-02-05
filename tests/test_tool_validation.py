@@ -86,3 +86,11 @@ async def test_registry_returns_validation_error() -> None:
     reg.register(SampleTool())
     result = await reg.execute("sample", {"query": "hi"})
     assert "Invalid parameters" in result
+
+
+async def test_registry_respects_allowlist() -> None:
+    reg = ToolRegistry()
+    reg.register(SampleTool())
+    reg.set_allowed_tools([])
+    result = await reg.execute("sample", {"query": "hi", "count": 2})
+    assert "not permitted" in result

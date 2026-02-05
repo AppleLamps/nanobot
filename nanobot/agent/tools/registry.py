@@ -14,6 +14,7 @@ class ToolRegistry:
     
     def __init__(self):
         self._tools: dict[str, Tool] = {}
+        self._allowed_tools: set[str] | None = None
     
     def register(self, tool: Tool) -> None:
         """Register a tool."""
@@ -33,7 +34,10 @@ class ToolRegistry:
     
     def get_definitions(self) -> list[dict[str, Any]]:
         """Get all tool definitions in OpenAI format."""
-        return [tool.to_schema() for tool in self._tools.values()]
+        tools = self._tools.values()
+        if self._allowed_tools is not None:
+            tools = [tool for tool in tools if tool.name in self._allowed_tools]
+        return [tool.to_schema() for tool in tools]
     
     async def execute(self, name: str, params: dict[str, Any]) -> str:
         """
@@ -49,6 +53,9 @@ class ToolRegistry:
         Raises:
             KeyError: If tool not found.
         """
+        if self._allowed_tools is not None and name not in self._allowed_tools:
+            return f"Error: Tool '{name}' is not permitted"
+
         tool = self._tools.get(name)
         if not tool:
             return f"Error: Tool '{name}' not found"
@@ -65,6 +72,13 @@ class ToolRegistry:
     def tool_names(self) -> list[str]:
         """Get list of registered tool names."""
         return list(self._tools.keys())
+
+    def set_allowed_tools(self, allowed: list[str] | None) -> None:
+        """Restrict available tools to an allowlist (None = no restriction)."""
+        if allowed is None:
+            self._allowed_tools = None
+            return
+        self._allowed_tools = set(allowed)
     
     def __len__(self) -> int:
         return len(self._tools)
