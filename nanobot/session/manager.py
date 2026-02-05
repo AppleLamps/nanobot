@@ -51,6 +51,7 @@ class Session:
         if max_messages <= 0:
             return []
 
+        # max_messages is positive here due to the guard above.
         max_retained = max_messages * self._HISTORY_RETENTION_MULTIPLIER
         if len(self.messages) > max_retained:
             # Permanently trim older messages to prevent unbounded session growth.
