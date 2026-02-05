@@ -19,7 +19,7 @@ class Session:
     Stores messages in JSONL format for easy reading and persistence.
     """
 
-    _HISTORY_RETENTION_MULTIPLIER = 2  # Multiplier on max_messages to retain extra history.
+    _HISTORY_RETENTION_MULTIPLIER = 2  # Retain up to 2x max_messages in storage.
     
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -53,6 +53,7 @@ class Session:
 
         max_retained = max_messages * self._HISTORY_RETENTION_MULTIPLIER
         if len(self.messages) > max_retained:
+            # Permanently trim older messages to prevent unbounded session growth.
             self.messages = self.messages[-max_retained:]
             self.updated_at = datetime.now()
 
