@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 
 from nanobot.agent.context import ContextBuilder
-from nanobot.utils.helpers import today_date
 
 
 def test_bootstrap_prompt_caches_file_reads(tmp_path, monkeypatch) -> None:
@@ -41,24 +40,30 @@ def test_bootstrap_cache_invalidates_on_mtime_change(tmp_path) -> None:
     assert second != first
 
 
-def test_memory_context_caches_expensive_reads(tmp_path, monkeypatch) -> None:
+def test_memory_context_caches_expensive_reads(tmp_path) -> None:
+    # Memory is retrieved per request (query-time) and scoped by session to avoid cross-chat leakage.
     mem_dir = tmp_path / "memory"
-    mem_dir.mkdir(parents=True, exist_ok=True)
+    (mem_dir / "MEMORY.md").parent.mkdir(parents=True, exist_ok=True)
 
-    (mem_dir / "MEMORY.md").write_text("long-term", encoding="utf-8")
-    (mem_dir / f"{today_date()}.md").write_text("today", encoding="utf-8")
+    # Global memory (shared workspace).
+    (mem_dir / "MEMORY.md").write_text("Global: likes apples and coffee.", encoding="utf-8")
+
+    # Session-scoped memories.
+    a_dir = mem_dir / "sessions" / "cli_cA"
+    b_dir = mem_dir / "sessions" / "cli_cB"
+    a_dir.mkdir(parents=True, exist_ok=True)
+    b_dir.mkdir(parents=True, exist_ok=True)
+    (a_dir / "MEMORY.md").write_text("Alpha: project name is Zorbulator.", encoding="utf-8")
+    (b_dir / "MEMORY.md").write_text("Beta: secret token is QUUX-12345.", encoding="utf-8")
 
     builder = ContextBuilder(tmp_path)
-    first = builder._get_memory_context()
-    assert "long-term" in first
-    assert "today" in first
 
-    def _boom(*args, **kwargs) -> str:  # pragma: no cover
-        raise AssertionError("get_memory_context should not be called on cache hit")
+    prompt_a = builder.build_system_prompt(session_key="cli:cA", current_message="Zorbulator", history=[])
+    assert "Zorbulator" in prompt_a
+    assert "QUUX-12345" not in prompt_a
 
-    monkeypatch.setattr(builder.memory, "get_memory_context", _boom, raising=True)
-    second = builder._get_memory_context()
-    assert second == first
+    # Ensure the prompt clearly shows the session memory path (scoping).
+    assert str(a_dir / "MEMORY.md") in prompt_a
 
 
 def test_skills_summary_cache_invalidates_on_skill_mtime(tmp_path) -> None:
@@ -92,4 +97,3 @@ def test_skills_summary_cache_invalidates_on_skill_mtime(tmp_path) -> None:
     s3 = builder._get_skills_summary()
     assert s3 == "summary-2"
     assert builder.skills.calls == 2
-

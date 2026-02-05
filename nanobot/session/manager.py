@@ -1,14 +1,16 @@
 """Session management for conversation history."""
 
 import json
+import os
 from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from loguru import logger
+from filelock import FileLock
 
-from nanobot.utils.helpers import ensure_dir, safe_filename
+from nanobot.utils.helpers import ensure_dir, safe_filename, get_sessions_path
 
 
 @dataclass
@@ -79,14 +81,22 @@ class SessionManager:
     
     def __init__(self, workspace: Path):
         self.workspace = workspace
-        self.sessions_dir = ensure_dir(Path.home() / ".nanobot" / "sessions")
+        # Use helper so tests can monkeypatch Path.home().
+        self.sessions_dir = ensure_dir(get_sessions_path())
         self._cache: dict[str, Session] = {}
-    
+
     def _get_session_path(self, key: str) -> Path:
         """Get the file path for a session."""
         safe_key = safe_filename(key.replace(":", "_"))
         return self.sessions_dir / f"{safe_key}.jsonl"
-    
+
+    def _get_lock_path(self, path: Path) -> Path:
+        return Path(str(path) + ".lock")
+
+    def _lock_for(self, path: Path) -> FileLock:
+        # FileLock uses a separate lock file, so it works on Windows and across processes.
+        return FileLock(str(self._get_lock_path(path)))
+
     def get_or_create(self, key: str) -> Session:
         """
         Get an existing session or create a new one.
@@ -117,29 +127,34 @@ class SessionManager:
             return None
         
         try:
-            messages = []
-            metadata = {}
+            messages: list[dict[str, Any]] = []
+            metadata: dict[str, Any] = {}
             created_at = None
-            
-            with open(path) as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    data = json.loads(line)
-                    
-                    if data.get("_type") == "metadata":
-                        metadata = data.get("metadata", {})
-                        created_at = datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None
-                    else:
-                        messages.append(data)
-            
+
+            with self._lock_for(path):
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+
+                        data = json.loads(line)
+
+                        if data.get("_type") == "metadata":
+                            metadata = data.get("metadata", {})
+                            created_at = (
+                                datetime.fromisoformat(data["created_at"])
+                                if data.get("created_at")
+                                else None
+                            )
+                        else:
+                            messages.append(data)
+
             return Session(
                 key=key,
                 messages=messages,
                 created_at=created_at or datetime.now(),
-                metadata=metadata
+                metadata=metadata,
             )
         except Exception as e:
             logger.warning(f"Failed to load session {key}: {e}")
@@ -148,21 +163,28 @@ class SessionManager:
     def save(self, session: Session) -> None:
         """Save a session to disk."""
         path = self._get_session_path(session.key)
-        
-        with open(path, "w") as f:
-            # Write metadata first
-            metadata_line = {
-                "_type": "metadata",
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "metadata": session.metadata
-            }
-            f.write(json.dumps(metadata_line) + "\n")
-            
-            # Write messages
-            for msg in session.messages:
-                f.write(json.dumps(msg) + "\n")
-        
+
+        tmp_path = Path(str(path) + ".tmp")
+        with self._lock_for(path):
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                # Write metadata first
+                metadata_line = {
+                    "_type": "metadata",
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat(),
+                    "metadata": session.metadata,
+                }
+                f.write(json.dumps(metadata_line) + "\n")
+
+                # Write messages
+                for msg in session.messages:
+                    f.write(json.dumps(msg) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Atomic replace to avoid torn writes.
+            os.replace(tmp_path, path)
+
         self._cache[session.key] = session
     
     def delete(self, key: str) -> bool:

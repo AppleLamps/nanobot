@@ -3,21 +3,53 @@
 from pathlib import Path
 from datetime import datetime
 
-from nanobot.utils.helpers import ensure_dir, today_date
+from nanobot.utils.helpers import ensure_dir, safe_filename, today_date
 
 
 class MemoryStore:
     """
     Memory system for the agent.
     
-    Supports daily notes (memory/YYYY-MM-DD.md) and long-term memory (MEMORY.md).
+    Supports daily notes (YYYY-MM-DD.md) and long-term memory (MEMORY.md).
+
+    Memory can be scoped to avoid cross-chat leakage:
+    - global: workspace/memory/
+    - session: workspace/memory/sessions/<safe-session-key>/
+    - user: workspace/memory/users/<safe-user-key>/
     """
     
-    def __init__(self, workspace: Path):
+    def __init__(self, workspace: Path, *, scope: str = "global", key: str | None = None):
         self.workspace = workspace
-        self.memory_dir = ensure_dir(workspace / "memory")
+        self.scope = scope
+        self.key = key
+
+        root = ensure_dir(workspace / "memory")
+        if scope == "global" or not key:
+            self.memory_dir = root
+        else:
+            # Keep on-disk layout stable and safe on Windows.
+            safe_key = safe_filename(key.replace(":", "_"))
+            if scope == "session":
+                self.memory_dir = ensure_dir(root / "sessions" / safe_key)
+            elif scope == "user":
+                self.memory_dir = ensure_dir(root / "users" / safe_key)
+            else:
+                # Unknown scope string: treat it as a folder name under memory/.
+                self.memory_dir = ensure_dir(root / safe_filename(scope) / safe_key)
         self.memory_file = self.memory_dir / "MEMORY.md"
-    
+
+    @classmethod
+    def global_store(cls, workspace: Path) -> "MemoryStore":
+        return cls(workspace, scope="global", key=None)
+
+    @classmethod
+    def session_store(cls, workspace: Path, session_key: str) -> "MemoryStore":
+        return cls(workspace, scope="session", key=session_key)
+
+    @classmethod
+    def user_store(cls, workspace: Path, user_key: str) -> "MemoryStore":
+        return cls(workspace, scope="user", key=user_key)
+
     def get_today_file(self) -> Path:
         """Get path to today's memory file."""
         return self.memory_dir / f"{today_date()}.md"

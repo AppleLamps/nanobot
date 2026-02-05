@@ -35,6 +35,10 @@ class ToolRegistry:
     def register(self, tool: Tool) -> None:
         """Register a tool."""
         self._tools[tool.name] = tool
+
+    def iter_tools(self) -> list[Tool]:
+        """Return registered tool instances (in insertion order)."""
+        return list(self._tools.values())
     
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""

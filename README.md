@@ -111,7 +111,9 @@ nanobot onboard
   },
   "agents": {
     "defaults": {
-      "model": "anthropic/claude-opus-4-5"
+      "model": "anthropic/claude-opus-4-5",
+      "memoryScope": "session",
+      "maxConcurrentMessages": 4
     }
   },
   "tools": {
@@ -315,6 +317,35 @@ Config file: `~/.nanobot/config.json`
 | `groq` | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
 
+### Agents
+
+`agents.defaults` controls runtime behavior of the core agent.
+
+| Field | Purpose | Default |
+|------|---------|---------|
+| `model` | LLM model id | `anthropic/claude-opus-4-5` |
+| `maxTokens` | Max tokens per response | `8192` |
+| `temperature` | Sampling temperature | `0.7` |
+| `maxToolIterations` | Max tool loop iterations per message | `20` |
+| `memoryScope` | Memory isolation boundary: `session` = per chat (channel:chat_id), `user` = per user (channel:sender_id) | `session` |
+| `maxConcurrentMessages` | Max number of different chats processed in parallel (messages within the same chat are still sequential) | `4` |
+| `memoryMaxChars` | Prompt budget for memory injection (chars) | `6000` |
+| `skillsMaxChars` | Prompt budget for skills injection (chars) | `12000` |
+| `bootstrapMaxChars` | Prompt budget for bootstrap files (chars) | `4000` |
+
+### Memory
+
+Memory files live under the workspace `memory/` directory and are scoped based on `memoryScope`:
+
+- `session`: `memory/sessions/<channel_chatId>/MEMORY.md`
+- `user`: `memory/users/<channel_senderId>/MEMORY.md`
+
+nanobot indexes memory into `memory/memory.sqlite3` (SQLite with FTS when available) and retrieves only the most relevant chunks per request, instead of injecting a growing `MEMORY.md` into every prompt.
+
+### Sessions
+
+nanobot persists chat history as JSONL under `~/.nanobot/sessions/`. Session writes are locked and atomic, so concurrent chats (or multiple processes) don't corrupt the history.
+
 
 <details>
 <summary><b>Full config example</b></summary>
@@ -323,7 +354,9 @@ Config file: `~/.nanobot/config.json`
 {
   "agents": {
     "defaults": {
-      "model": "anthropic/claude-opus-4-5"
+      "model": "anthropic/claude-opus-4-5",
+      "memoryScope": "session",
+      "maxConcurrentMessages": 4
     }
   },
   "providers": {
@@ -426,6 +459,7 @@ nanobot/
 │   ├── loop.py     #    Agent loop (LLM ↔ tool execution)
 │   ├── context.py  #    Prompt builder
 │   ├── memory.py   #    Persistent memory
+│   ├── memory_db.py#    Memory index + retrieval (SQLite/FTS)
 │   ├── skills.py   #    Skills loader
 │   ├── subagent.py #    Background task execution
 │   └── tools/      #    Built-in tools (incl. spawn)

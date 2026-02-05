@@ -7,24 +7,24 @@ from typing import Any
 
 from loguru import logger
 
+from nanobot.agent.context import ContextBuilder
+from nanobot.agent.subagent import SubagentManager
+from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.message import MessageTool
+from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.spawn import SpawnTool
+from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, EditFileTool, ListDirTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
-from nanobot.agent.tools.message import MessageTool
-from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.subagent import SubagentManager
 from nanobot.session.manager import SessionManager
 
 
 class AgentLoop:
     """
     The agent loop is the core processing engine.
-    
+
     It:
     1. Receives messages from the bus
     2. Builds context with history, memory, skills
@@ -32,7 +32,7 @@ class AgentLoop:
     4. Executes tool calls
     5. Sends responses back
     """
-    
+
     def __init__(
         self,
         bus: MessageBus,
@@ -45,25 +45,37 @@ class AgentLoop:
         allowed_tools: list[str] | None = None,
         agent_config: "AgentDefaults | None" = None,
     ):
-        from nanobot.config.schema import ExecToolConfig, AgentDefaults
+        from nanobot.config.schema import AgentDefaults, ExecToolConfig
+
         self.bus = bus
         self.provider = provider
         self.workspace = workspace
+
         cfg = agent_config or AgentDefaults()
+
         self.model = model or cfg.model or provider.get_default_model()
-        self.max_iterations = max_iterations if max_iterations is not None else cfg.max_tool_iterations
+        self.max_iterations = (
+            max_iterations if max_iterations is not None else cfg.max_tool_iterations
+        )
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.allowed_tools = allowed_tools
+
         self.max_tokens = cfg.max_tokens
         self.temperature = cfg.temperature
+        self.memory_scope = (getattr(cfg, "memory_scope", None) or "session").strip().lower()
+        self.max_concurrent_messages = max(
+            int(getattr(cfg, "max_concurrent_messages", 1) or 1),
+            1,
+        )
+
         self.tool_error_backoff = max(int(cfg.tool_error_backoff), 0)
         self.auto_tune_max_tokens = bool(cfg.auto_tune_max_tokens)
         self.auto_tune_initial_max_tokens = cfg.initial_max_tokens
         self.auto_tune_step = max(int(cfg.auto_tune_step), 1)
         self.auto_tune_threshold = float(cfg.auto_tune_threshold)
         self.auto_tune_streak = max(int(cfg.auto_tune_streak), 1)
-        
+
         self.context = ContextBuilder(
             workspace,
             memory_max_chars=cfg.memory_max_chars,
@@ -71,7 +83,11 @@ class AgentLoop:
             bootstrap_max_chars=cfg.bootstrap_max_chars,
         )
         self.sessions = SessionManager(workspace)
+
+        # This registry is the "base" tool set. Each request gets its own request-scoped
+        # ToolRegistry to avoid cross-chat state leaks.
         self.tools = ToolRegistry()
+
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -80,48 +96,97 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
         )
-        
+
         self._running = False
         self._register_default_tools()
-    
+
+    def _session_key_for_inbound(self, msg: InboundMessage) -> str:
+        """Return the session key used for ordering/sharding work."""
+        if msg.channel != "system":
+            return msg.session_key
+
+        # System messages route back to the origin session; keep ordering consistent.
+        if ":" in msg.chat_id:
+            origin_channel, origin_chat_id = msg.chat_id.split(":", 1)
+        else:
+            origin_channel, origin_chat_id = "cli", msg.chat_id
+        return f"{origin_channel}:{origin_chat_id}"
+
+    def _build_tools_for_request(
+        self,
+        *,
+        channel: str,
+        chat_id: str,
+        allowed_tools: list[str] | None,
+    ) -> ToolRegistry:
+        """Build a request-scoped tool registry (no shared mutable per-chat state)."""
+        reg = ToolRegistry()
+
+        # Copy all registered tools, but always override message/spawn with request-scoped instances.
+        for tool in self.tools.iter_tools():
+            if tool.name in ("message", "spawn"):
+                continue
+            reg.register(tool)
+
+        msg_tool = MessageTool(
+            send_callback=self.bus.publish_outbound,
+            default_channel=channel,
+            default_chat_id=chat_id,
+        )
+        reg.register(msg_tool)
+
+        spawn_tool = SpawnTool(manager=self.subagents)
+        spawn_tool.set_context(channel, chat_id)
+        reg.register(spawn_tool)
+
+        reg.set_allowed_tools(allowed_tools if isinstance(allowed_tools, list) else None)
+        return reg
+
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
         # File tools
-        self.tools.register(ReadFileTool(
-            workspace_root=self.workspace,
-            restrict_to_workspace=self.exec_config.restrict_to_workspace,
-        ))
-        self.tools.register(WriteFileTool(
-            workspace_root=self.workspace,
-            restrict_to_workspace=self.exec_config.restrict_to_workspace,
-        ))
-        self.tools.register(EditFileTool(
-            workspace_root=self.workspace,
-            restrict_to_workspace=self.exec_config.restrict_to_workspace,
-        ))
-        self.tools.register(ListDirTool(
-            workspace_root=self.workspace,
-            restrict_to_workspace=self.exec_config.restrict_to_workspace,
-        ))
-        
+        self.tools.register(
+            ReadFileTool(
+                workspace_root=self.workspace,
+                restrict_to_workspace=self.exec_config.restrict_to_workspace,
+            )
+        )
+        self.tools.register(
+            WriteFileTool(
+                workspace_root=self.workspace,
+                restrict_to_workspace=self.exec_config.restrict_to_workspace,
+            )
+        )
+        self.tools.register(
+            EditFileTool(
+                workspace_root=self.workspace,
+                restrict_to_workspace=self.exec_config.restrict_to_workspace,
+            )
+        )
+        self.tools.register(
+            ListDirTool(
+                workspace_root=self.workspace,
+                restrict_to_workspace=self.exec_config.restrict_to_workspace,
+            )
+        )
+
         # Shell tool
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            restrict_to_workspace=self.exec_config.restrict_to_workspace,
-        ))
-        
+        self.tools.register(
+            ExecTool(
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.exec_config.restrict_to_workspace,
+            )
+        )
+
         # Web tools
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
-        
-        # Message tool
-        message_tool = MessageTool(send_callback=self.bus.publish_outbound)
-        self.tools.register(message_tool)
-        
-        # Spawn tool (for subagents)
-        spawn_tool = SpawnTool(manager=self.subagents)
-        self.tools.register(spawn_tool)
+
+        # Message/spawn tools are registered here for discovery, but actual execution uses
+        # per-request instances to avoid cross-chat state leaks.
+        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
+        self.tools.register(SpawnTool(manager=self.subagents))
 
     def _is_tool_error(self, result: str) -> bool:
         return result.strip().lower().startswith("error:")
@@ -157,9 +222,7 @@ class AgentLoop:
         if prompt_tokens > peak:
             session.metadata["prompt_tokens_peak"] = prompt_tokens
             if peak and prompt_tokens > int(peak * 1.5) and prompt_tokens > 2000:
-                logger.warning(
-                    f"Prompt tokens spike: {prompt_tokens} (previous peak {peak})"
-                )
+                logger.warning(f"Prompt tokens spike: {prompt_tokens} (previous peak {peak})")
 
     def _maybe_autotune_max_tokens(
         self,
@@ -183,133 +246,143 @@ class AgentLoop:
             streak = 0
 
         session.metadata["token_tune_streak"] = streak
-    
+
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
         self._running = True
         logger.info("Agent loop started")
-        
-        while self._running:
-            try:
-                # Wait for next message
-                msg = await asyncio.wait_for(
-                    self.bus.consume_inbound(),
-                    timeout=1.0
-                )
-                
-                # Process it
+
+        sem = asyncio.Semaphore(max(int(self.max_concurrent_messages), 1))
+        tails: dict[str, asyncio.Task[None]] = {}
+        tasks: set[asyncio.Task[None]] = set()
+
+        async def _process_one(msg: InboundMessage, session_key: str) -> None:
+            prev = tails.get(session_key)
+            if prev is not None:
+                try:
+                    await prev
+                except Exception:
+                    # If a previous message failed, still allow new messages to proceed.
+                    pass
+
+            async with sem:
                 try:
                     response = await self._process_message(msg)
                     if response:
                         await self.bus.publish_outbound(response)
                 except Exception as e:
                     logger.error(f"Error processing message: {e}")
-                    # Send error response
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel,
-                        chat_id=msg.chat_id,
-                        content=f"Sorry, I encountered an error: {str(e)}"
-                    ))
-            except asyncio.TimeoutError:
-                continue
-    
+                    await self.bus.publish_outbound(
+                        OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content=f"Sorry, I encountered an error: {str(e)}",
+                        )
+                    )
+
+        try:
+            while self._running:
+                try:
+                    msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+
+                session_key = self._session_key_for_inbound(msg)
+                t = asyncio.create_task(_process_one(msg, session_key))
+                tails[session_key] = t
+                tasks.add(t)
+
+                def _cleanup(done: asyncio.Task[None], *, sk: str = session_key) -> None:
+                    tasks.discard(done)
+                    if tails.get(sk) is done:
+                        tails.pop(sk, None)
+
+                t.add_done_callback(_cleanup)
+        finally:
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
     def stop(self) -> None:
         """Stop the agent loop."""
         self._running = False
         logger.info("Agent loop stopping")
-    
+
     async def _process_message(
         self,
         msg: InboundMessage,
-        session_key_override: str | None = None
+        session_key_override: str | None = None,
     ) -> OutboundMessage | None:
-        """
-        Process a single inbound message.
-        
-        Args:
-            msg: The inbound message to process.
-        
-        Returns:
-            The response message, or None if no response needed.
-        """
-        # Handle system messages (subagent announces)
-        # The chat_id contains the original "channel:chat_id" to route back to
+        """Process a single inbound message."""
+        # Handle system messages (subagent announces).
+        # The chat_id contains the original "channel:chat_id" to route back to.
         if msg.channel == "system":
             return await self._process_system_message(msg)
-        
+
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}")
-        
-        # Get or create session
+
         session_key = session_key_override or msg.session_key
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
-        self.tools.set_allowed_tools(allowed_tools)
-        
-        # Update tool contexts
-        message_tool = self.tools.get("message")
-        if isinstance(message_tool, MessageTool):
-            message_tool.set_context(msg.channel, msg.chat_id)
-        
-        spawn_tool = self.tools.get("spawn")
-        if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(msg.channel, msg.chat_id)
-        
-        # Build initial messages (use get_history for LLM-formatted messages)
+
+        tools = self._build_tools_for_request(
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            allowed_tools=allowed_tools if isinstance(allowed_tools, list) else None,
+        )
+
         messages = self.context.build_messages(
             history=session.get_history(),
             current_message=msg.content,
+            session_key=session_key,
+            memory_scope=self.memory_scope,
+            memory_key=(f"{msg.channel}:{msg.sender_id}" if self.memory_scope == "user" else session_key),
             media=msg.media if msg.media else None,
         )
-        
-        # Agent loop
+
         iteration = 0
-        final_content = None
+        final_content: str | None = None
         tool_error_streak = 0
-        
+
         while iteration < self.max_iterations:
             iteration += 1
 
             max_tokens_used = self._get_session_max_tokens(session)
 
-            # Call LLM
             response = await self.provider.chat(
                 messages=messages,
-                tools=self.tools.get_definitions(),
+                tools=tools.get_definitions(),
                 model=self.model,
                 max_tokens=max_tokens_used,
                 temperature=self.temperature,
             )
 
             self._record_usage(session, response.usage, max_tokens_used)
-            
-            # Handle tool calls
+
             if response.has_tool_calls:
-                # Tool loop: append assistant tool calls, execute tools, add tool results, then continue.
-                # Add assistant message with tool calls
                 tool_call_dicts = [
                     {
                         "id": tc.id,
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)  # Must be JSON string
-                        }
+                            "arguments": json.dumps(tc.arguments),
+                        },
                     }
                     for tc in response.tool_calls
                 ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
-                )
-                
-                # Execute tools (parallelize consecutive parallel-safe calls)
+                messages = self.context.add_assistant_message(messages, response.content, tool_call_dicts)
+
                 abort_loop = False
-                results = await self.tools.execute_calls(response.tool_calls, allow_parallel=True)
+                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
                 for tool_call, result in zip(response.tool_calls, results):
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
                     )
                     messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
+                        messages,
+                        tool_call.id,
+                        tool_call.name,
+                        result,
                     )
                     if self.tool_error_backoff > 0:
                         if self._is_tool_error(result):
@@ -323,10 +396,10 @@ class AgentLoop:
                             )
                             abort_loop = True
                             break
+
                 if abort_loop:
                     break
             else:
-                # No tool calls, we're done
                 final_content = response.content
                 self._maybe_autotune_max_tokens(
                     session,
@@ -334,80 +407,67 @@ class AgentLoop:
                     max_tokens_used,
                 )
                 break
-        
+
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
-        
-        # Save to session
+
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content)
         self.sessions.save(session)
-        
+
         return OutboundMessage(
             channel=msg.channel,
             chat_id=msg.chat_id,
-            content=final_content
+            content=final_content,
         )
-    
+
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
-        """
-        Process a system message (e.g., subagent announce).
-        
-        The chat_id field contains "original_channel:original_chat_id" to route
-        the response back to the correct destination.
-        """
+        """Process a system message (e.g., subagent announce)."""
         logger.info(f"Processing system message from {msg.sender_id}")
-        
-        # Parse origin from chat_id (format: "channel:chat_id")
+
+        # Parse origin from chat_id (format: "channel:chat_id").
         if ":" in msg.chat_id:
-            parts = msg.chat_id.split(":", 1)
-            origin_channel = parts[0]
-            origin_chat_id = parts[1]
+            origin_channel, origin_chat_id = msg.chat_id.split(":", 1)
         else:
-            # Fallback
-            origin_channel = "cli"
-            origin_chat_id = msg.chat_id
-        
-        # Use the origin session for context
+            origin_channel, origin_chat_id = "cli", msg.chat_id
+
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
-        self.tools.set_allowed_tools(allowed_tools)
-        
-        # Update tool contexts
-        message_tool = self.tools.get("message")
-        if isinstance(message_tool, MessageTool):
-            message_tool.set_context(origin_channel, origin_chat_id)
-        
-        spawn_tool = self.tools.get("spawn")
-        if isinstance(spawn_tool, SpawnTool):
-            spawn_tool.set_context(origin_channel, origin_chat_id)
-        
-        # Build messages with the announce content
+
+        tools = self._build_tools_for_request(
+            channel=origin_channel,
+            chat_id=origin_chat_id,
+            allowed_tools=allowed_tools if isinstance(allowed_tools, list) else None,
+        )
+
         messages = self.context.build_messages(
             history=session.get_history(),
-            current_message=msg.content
+            current_message=msg.content,
+            session_key=session_key,
+            # System messages should not attribute memory to the subagent sender_id.
+            memory_scope="session",
+            memory_key=session_key,
         )
-        
-        # Agent loop (limited for announce handling)
+
         iteration = 0
-        final_content = None
+        final_content: str | None = None
         tool_error_streak = 0
-        
+
         while iteration < self.max_iterations:
             iteration += 1
-            
+
             max_tokens_used = self._get_session_max_tokens(session)
             response = await self.provider.chat(
                 messages=messages,
-                tools=self.tools.get_definitions(),
+                tools=tools.get_definitions(),
                 model=self.model,
                 max_tokens=max_tokens_used,
                 temperature=self.temperature,
             )
 
             self._record_usage(session, response.usage, max_tokens_used)
-            
+
             if response.has_tool_calls:
                 tool_call_dicts = [
                     {
@@ -415,23 +475,24 @@ class AgentLoop:
                         "type": "function",
                         "function": {
                             "name": tc.name,
-                            "arguments": json.dumps(tc.arguments)
-                        }
+                            "arguments": json.dumps(tc.arguments),
+                        },
                     }
                     for tc in response.tool_calls
                 ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts
-                )
-                
+                messages = self.context.add_assistant_message(messages, response.content, tool_call_dicts)
+
                 abort_loop = False
-                results = await self.tools.execute_calls(response.tool_calls, allow_parallel=True)
+                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
                 for tool_call, result in zip(response.tool_calls, results):
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
                     )
                     messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
+                        messages,
+                        tool_call.id,
+                        tool_call.name,
+                        result,
                     )
                     if self.tool_error_backoff > 0:
                         if self._is_tool_error(result):
@@ -445,6 +506,7 @@ class AgentLoop:
                             )
                             abort_loop = True
                             break
+
                 if abort_loop:
                     break
             else:
@@ -455,38 +517,28 @@ class AgentLoop:
                     max_tokens_used,
                 )
                 break
-        
+
         if final_content is None:
             final_content = "Background task completed."
-        
-        # Save to session (mark as system message in history)
+
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
         self.sessions.save(session)
-        
+
         return OutboundMessage(
             channel=origin_channel,
             chat_id=origin_chat_id,
-            content=final_content
+            content=final_content,
         )
-    
+
     async def process_direct(self, content: str, session_key: str = "cli:direct") -> str:
-        """
-        Process a message directly (for CLI usage).
-        
-        Args:
-            content: The message content.
-            session_key: Session identifier.
-        
-        Returns:
-            The agent's response.
-        """
+        """Process a message directly (for CLI usage)."""
         msg = InboundMessage(
             channel="cli",
             sender_id="user",
             chat_id="direct",
-            content=content
+            content=content,
         )
-        
+
         response = await self._process_message(msg, session_key_override=session_key)
         return response.content if response else ""

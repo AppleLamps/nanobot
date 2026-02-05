@@ -47,6 +47,13 @@ class AgentDefaults(BaseModel):
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20
+    # Memory scoping:
+    # - session: per chat (channel:chat_id)
+    # - user: per user (channel:sender_id)
+    memory_scope: str = "session"
+    # Concurrency: maximum number of different chats/sessions processed in parallel.
+    # Messages from the same session are still processed sequentially.
+    max_concurrent_messages: int = 4
     # Prompt budgets (characters; sliding-window truncation)
     memory_max_chars: int = 6000
     skills_max_chars: int = 12000
