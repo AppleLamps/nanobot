@@ -16,3 +16,12 @@ def test_get_history_trims_old_messages() -> None:
         "msg-4",
         "msg-5",
     ]
+
+
+def test_get_history_with_zero_max_messages_returns_empty() -> None:
+    session = Session(key="test")
+
+    session.add_message("user", "msg-0")
+
+    assert session.get_history(max_messages=0) == []
+    assert [item["content"] for item in session.messages] == ["msg-0"]
