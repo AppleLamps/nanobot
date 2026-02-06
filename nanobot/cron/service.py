@@ -62,7 +62,9 @@ class CronService:
         on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None
     ):
         self.store_path = store_path
-        self.on_job = on_job  # Callback to execute job, returns response text
+        # Callback to execute the job. It may return response text for the caller,
+        # but CronService itself does not currently persist or use the return value.
+        self.on_job = on_job
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task | None = None
         self._running = False
@@ -233,9 +235,8 @@ class CronService:
         logger.info(f"Cron: executing job '{job.name}' ({job.id})")
         
         try:
-            response = None
             if self.on_job:
-                response = await self.on_job(job)
+                await self.on_job(job)
             
             job.state.last_status = "ok"
             job.state.last_error = None

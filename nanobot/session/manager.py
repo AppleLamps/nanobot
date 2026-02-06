@@ -1,5 +1,6 @@
 """Session management for conversation history."""
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -162,6 +163,20 @@ class SessionManager:
     
     def save(self, session: Session) -> None:
         """Save a session to disk."""
+        self._save_to_disk(session)
+        self._cache[session.key] = session
+
+    async def save_async(self, session: Session) -> None:
+        """
+        Save a session without blocking the asyncio event loop.
+
+        This offloads disk I/O + fsync to a thread, then updates the in-memory cache.
+        """
+        await asyncio.to_thread(self._save_to_disk, session)
+        self._cache[session.key] = session
+
+    def _save_to_disk(self, session: Session) -> None:
+        """Synchronous save implementation (atomic write + fsync)."""
         path = self._get_session_path(session.key)
 
         tmp_path = Path(str(path) + ".tmp")
@@ -185,8 +200,6 @@ class SessionManager:
 
             # Atomic replace to avoid torn writes.
             os.replace(tmp_path, path)
-
-        self._cache[session.key] = session
     
     def delete(self, key: str) -> bool:
         """

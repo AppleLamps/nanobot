@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "6d5abc86",
+      "name": "t1",
+      "enabled": true,
+      "schedule": {
+        "kind": "every",
+        "atMs": null,
+        "everyMs": 1000,
+        "expr": null,
+        "tz": null
+      },
+      "payload": {
+        "kind": "agent_turn",
+        "message": "hello",
+        "deliver": false,
+        "channel": null,
+        "to": null
+      },
+      "state": {
+        "nextRunAtMs": 1770346635335,
+        "lastRunAtMs": 1770346634334,
+        "lastStatus": "ok",
+        "lastError": null
+      },
+      "createdAtMs": 1770346634333,
+      "updatedAtMs": 1770346634335,
+      "deleteAfterRun": false
+    }
+  ]
+}

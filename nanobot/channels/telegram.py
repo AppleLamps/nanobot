@@ -100,7 +100,6 @@ class TelegramChannel(BaseChannel):
         self.groq_api_key = groq_api_key
         self.workspace = workspace
         self._app: Application | None = None
-        self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
     
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
@@ -224,9 +223,8 @@ class TelegramChannel(BaseChannel):
         sender_id = str(user.id)
         if user.username:
             sender_id = f"{sender_id}|{user.username}"
-        
-        # Store chat_id for replies
-        self._chat_ids[sender_id] = chat_id
+        # Note: we intentionally do not maintain a sender_id -> chat_id map here.
+        # Outbound routing uses msg.chat_id provided by the bus/session context.
         
         # Build content from text and/or media
         content_parts = []

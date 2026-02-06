@@ -526,19 +526,32 @@ def gateway(
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
     
     async def run():
+        agent_task: asyncio.Task | None = None
+        channels_task: asyncio.Task | None = None
         try:
             await cron.start()
             await heartbeat.start()
-            await asyncio.gather(
-                agent.run(),
-                channels.start_all(),
-            )
-        except KeyboardInterrupt:
+
+            # asyncio.run() handles SIGINT by cancelling the main task; we still want
+            # our cleanup to run reliably (finally block below).
+            agent_task = asyncio.create_task(agent.run(), name="agent.run")
+            channels_task = asyncio.create_task(channels.start_all(), name="channels.start_all")
+            await asyncio.gather(agent_task, channels_task)
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Cancellation is expected on SIGINT; proceed to cleanup.
+            pass
+        finally:
             console.print("\nShutting down...")
             heartbeat.stop()
             cron.stop()
             agent.stop()
             await channels.stop_all()
+
+            for t in (agent_task, channels_task):
+                if t is not None and not t.done():
+                    t.cancel()
+            # Ensure background tasks settle before closing the loop.
+            await asyncio.gather(*(t for t in (agent_task, channels_task) if t is not None), return_exceptions=True)
     
     asyncio.run(run())
 

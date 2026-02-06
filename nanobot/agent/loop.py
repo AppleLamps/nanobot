@@ -1,9 +1,11 @@
 """Agent loop: the core processing engine."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -19,6 +21,10 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import SessionManager
+
+if TYPE_CHECKING:
+    from nanobot.config.schema import AgentDefaults, ExecToolConfig
+    from nanobot.session.manager import Session
 
 
 class AgentLoop:
@@ -41,9 +47,9 @@ class AgentLoop:
         model: str | None = None,
         max_iterations: int | None = None,
         brave_api_key: str | None = None,
-        exec_config: "ExecToolConfig | None" = None,
+        exec_config: ExecToolConfig | None = None,
         allowed_tools: list[str] | None = None,
-        agent_config: "AgentDefaults | None" = None,
+        agent_config: AgentDefaults | None = None,
     ):
         from nanobot.config.schema import AgentDefaults, ExecToolConfig
 
@@ -183,16 +189,15 @@ class AgentLoop:
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
 
-        # Message/spawn tools are registered here for discovery, but actual execution uses
-        # per-request instances to avoid cross-chat state leaks.
-        self.tools.register(MessageTool(send_callback=self.bus.publish_outbound))
-        self.tools.register(SpawnTool(manager=self.subagents))
+        # Note: message/spawn tools are NOT registered on the base registry.
+        # They are always created per-request in _build_tools_for_request() to avoid
+        # cross-chat state leaks (default channel/chat_id context).
 
     def _is_tool_error(self, result: str) -> bool:
         s = result.strip().lower()
         return s.startswith("error:") or s.startswith("warning:")
 
-    def _get_session_max_tokens(self, session: "Session") -> int:
+    def _get_session_max_tokens(self, session: Session) -> int:
         if not self.auto_tune_max_tokens:
             return self.max_tokens
         override = session.metadata.get("max_tokens_override")
@@ -201,7 +206,7 @@ class AgentLoop:
         initial = self.auto_tune_initial_max_tokens or self.max_tokens
         return min(int(initial), self.max_tokens)
 
-    def _record_usage(self, session: "Session", usage: dict[str, int], max_tokens_used: int) -> None:
+    def _record_usage(self, session: Session, usage: dict[str, int], max_tokens_used: int) -> None:
         if not usage:
             return
         record = {
@@ -227,7 +232,7 @@ class AgentLoop:
 
     def _maybe_autotune_max_tokens(
         self,
-        session: "Session",
+        session: Session,
         completion_tokens: int | None,
         max_tokens_used: int,
     ) -> None:
@@ -311,7 +316,7 @@ class AgentLoop:
     async def _run_tool_loop(
         self,
         *,
-        session: "Session",
+        session: Session,
         messages: list[dict[str, Any]],
         tools: ToolRegistry,
         tool_error_backoff_message: str,
@@ -446,7 +451,7 @@ class AgentLoop:
 
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content)
-        self.sessions.save(session)
+        await self.sessions.save_async(session)
 
         return OutboundMessage(
             channel=msg.channel,
@@ -496,7 +501,7 @@ class AgentLoop:
 
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
-        self.sessions.save(session)
+        await self.sessions.save_async(session)
 
         return OutboundMessage(
             channel=origin_channel,

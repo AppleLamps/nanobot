@@ -1,10 +1,12 @@
 """Subagent manager for background task execution."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -12,9 +14,12 @@ from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.filesystem import ReadFileTool, WriteFileTool, ListDirTool
+from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+
+if TYPE_CHECKING:
+    from nanobot.config.schema import ExecToolConfig
 
 
 class SubagentManager:
@@ -33,7 +38,7 @@ class SubagentManager:
         bus: MessageBus,
         model: str | None = None,
         brave_api_key: str | None = None,
-        exec_config: "ExecToolConfig | None" = None,
+        exec_config: ExecToolConfig | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -101,6 +106,10 @@ class SubagentManager:
                 restrict_to_workspace=self.exec_config.restrict_to_workspace,
             ))
             tools.register(WriteFileTool(
+                workspace_root=self.workspace,
+                restrict_to_workspace=self.exec_config.restrict_to_workspace,
+            ))
+            tools.register(EditFileTool(
                 workspace_root=self.workspace,
                 restrict_to_workspace=self.exec_config.restrict_to_workspace,
             ))

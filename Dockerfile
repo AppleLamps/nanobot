@@ -35,6 +35,8 @@ RUN mkdir -p /root/.nanobot
 
 # Gateway default port
 EXPOSE 18790
+# WebUI default port (when enabled)
+EXPOSE 18791
 
 ENTRYPOINT ["nanobot"]
 CMD ["status"]

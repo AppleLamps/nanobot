@@ -243,19 +243,19 @@ When remembering something, write to the memory file above."""
             return [h.content for h in found]
 
         scope = (memory_scope or "session").strip().lower()
-        key = memory_key or (session_key if scope == "session" else None)
-        store = self._store_for_memory_scope(scope, key)
-        scope_name = f"{scope}:{key}" if key else "global"
+        scope_key = memory_key or (session_key if scope == "session" else None)
+        store = self._store_for_memory_scope(scope, scope_key)
+        scope_name = f"{scope}:{scope_key}" if scope_key else "global"
         hits.extend(_ingest_and_search(store, scope_name, k=10))
 
         # De-dupe while preserving order.
         seen: set[str] = set()
         deduped: list[str] = []
         for h in hits:
-            key = h.strip()
-            if not key or key in seen:
+            dedupe_key = h.strip()
+            if not dedupe_key or dedupe_key in seen:
                 continue
-            seen.add(key)
+            seen.add(dedupe_key)
             deduped.append(h)
 
         if not deduped:

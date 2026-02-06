@@ -37,6 +37,26 @@ def _is_loopback_host(host: str) -> bool:
     h = (host or "").strip().lower()
     return h in ("127.0.0.1", "localhost", "::1")
 
+def _token_is_weak(token: str) -> bool:
+    """
+    Heuristic token strength check for network-exposed WebUI.
+
+    Goal: catch obviously weak/predictable tokens, not prove cryptographic strength.
+    """
+    t = (token or "").strip()
+    if not t:
+        return True
+    low = t.lower()
+    if low in ("token", "changeme", "password", "admin", "nanobot", "secret"):
+        return True
+    # Require enough length to make guessing impractical.
+    if len(t) < 24:
+        return True
+    # Reject trivially repetitive tokens.
+    if len(set(t)) <= 3:
+        return True
+    return False
+
 
 class WebUIChannel(BaseChannel):
     """A minimal, high-polish browser UI for chatting with nanobot."""
@@ -222,6 +242,15 @@ class WebUIChannel(BaseChannel):
             )
             self._running = False
             return
+        if not _is_loopback_host(self._host):
+            tok = (self.config.auth_token or "").strip()
+            if _token_is_weak(tok):
+                logger.error(
+                    "WebUI authToken is too weak for non-loopback binding. "
+                    "Use a long, random token (suggestion: 32+ chars from a password manager)."
+                )
+                self._running = False
+                return
 
         host, port = self._host, self._port
         logger.info(f"Starting WebUI on http://{host}:{port or 0}/ (ws /ws)")
@@ -356,6 +385,15 @@ class WebUIChannel(BaseChannel):
                 fh = st.get("fh")
                 if fh:
                     fh.close()
+            except Exception:
+                pass
+            # Remove partial files when the client disconnects mid-upload.
+            try:
+                expected = int(st.get("expected") or 0)
+                received = int(st.get("received") or 0)
+                path = st.get("path")
+                if expected > 0 and received < expected and path:
+                    Path(path).unlink(missing_ok=True)
             except Exception:
                 pass
 
