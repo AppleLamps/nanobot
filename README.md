@@ -59,6 +59,12 @@
   </tr>
 </table>
 
+## ✅ Requirements
+
+- Python 3.11+
+- Node.js 18+ (only for the WhatsApp channel)
+- Optional: Docker, uv
+
 ## 📦 Install
 
 **Install from source** (latest features, recommended for development)
@@ -92,7 +98,7 @@ pip install nanobot-ai
 > [!TIP]
 > Run `nanobot onboard` to create `~/.nanobot/config.json`. In an interactive terminal, it will also prompt you for API keys (you can skip and edit the JSON later). Use `nanobot onboard --no-prompt` for non-interactive runs.
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
-> You can also change the model to `minimax/minimax-m2` for lower cost.
+> You can also change the model to any provider/model you have access to.
 
 **1. Initialize**
 
@@ -111,7 +117,7 @@ nanobot onboard
   },
   "agents": {
     "defaults": {
-      "model": "anthropic/claude-opus-4-5",
+      "model": "openai/gpt-oss-120b:exacto",
       "memoryScope": "session",
       "maxConcurrentMessages": 4
     }
@@ -192,6 +198,8 @@ Prefer a local browser chat UI? Enable the built-in `webui` channel.
 **2. Run**
 
 ```bash
+nanobot gateway --webui
+# or enable channels.webui.enabled in config.json and run:
 nanobot gateway
 ```
 
@@ -350,6 +358,7 @@ Config file: `~/.nanobot/config.json`
 | `openai` | LLM (GPT direct) | [platform.openai.com](https://platform.openai.com) |
 | `groq` | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
+| `zhipu` | LLM (Zhipu/GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
 
 ### Agents
 
@@ -357,7 +366,9 @@ Config file: `~/.nanobot/config.json`
 
 | Field | Purpose | Default |
 |------|---------|---------|
-| `model` | LLM model id | `anthropic/claude-opus-4-5` |
+| `workspace` | Workspace path | `~/.nanobot/workspace` |
+| `provider` | Explicit provider override | `""` |
+| `model` | LLM model id | `openai/gpt-oss-120b:exacto` |
 | `maxTokens` | Max tokens per response | `8192` |
 | `temperature` | Sampling temperature | `0.7` |
 | `maxToolIterations` | Max tool loop iterations per message | `20` |
@@ -366,13 +377,21 @@ Config file: `~/.nanobot/config.json`
 | `memoryMaxChars` | Prompt budget for memory injection (chars) | `6000` |
 | `skillsMaxChars` | Prompt budget for skills injection (chars) | `12000` |
 | `bootstrapMaxChars` | Prompt budget for bootstrap files (chars) | `4000` |
+| `toolErrorBackoff` | Tool retry backoff (attempts) | `3` |
+| `autoTuneMaxTokens` | Auto-tune response length | `false` |
+| `initialMaxTokens` | Initial tokens when auto-tune is on | `null` |
+| `autoTuneStep` | Auto-tune step size | `512` |
+| `autoTuneThreshold` | Auto-tune trigger threshold | `0.85` |
+| `autoTuneStreak` | Consecutive triggers to adjust | `3` |
 
 ### Memory
 
 Memory files live under the workspace `memory/` directory and are scoped based on `memoryScope`:
 
-- `session`: `memory/sessions/<channel_chatId>/MEMORY.md`
-- `user`: `memory/users/<channel_senderId>/MEMORY.md`
+- `session`: `memory/sessions/<safe-session-key>/MEMORY.md`
+- `user`: `memory/users/<safe-user-key>/MEMORY.md`
+
+`safe-*` keys are derived from `channel:chat_id` or `channel:sender_id` with filesystem-unsafe characters replaced (e.g., `:` -> `_`).
 
 nanobot indexes memory into `memory/memory.sqlite3` (SQLite with FTS when available) and retrieves only the most relevant chunks per request, instead of injecting a growing `MEMORY.md` into every prompt.
 
@@ -387,7 +406,7 @@ nanobot persists chat history as JSONL under `~/.nanobot/sessions/`. Session wri
 {
   "agents": {
     "defaults": {
-      "model": "anthropic/claude-opus-4-5",
+      "model": "openai/gpt-oss-120b:exacto",
       "memoryScope": "session",
       "maxConcurrentMessages": 4
     }
@@ -533,7 +552,7 @@ docker run -v ~/.nanobot:/root/.nanobot --rm nanobot onboard
 vim ~/.nanobot/config.json
 
 # Run gateway (connects to Telegram/WhatsApp)
-docker run -v ~/.nanobot:/root/.nanobot -p 18790:18790 nanobot gateway
+docker run -v ~/.nanobot:/root/.nanobot -p 18790:18790 -p 18791:18791 nanobot gateway --webui
 
 # Or run a single command
 docker run -v ~/.nanobot:/root/.nanobot --rm nanobot agent -m "Hello!"
