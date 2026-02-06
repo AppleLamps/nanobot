@@ -29,6 +29,8 @@ dependencies = [
     "readability-lxml>=0.8.0",
     "rich>=13.0.0",
     "croniter>=2.0.0",
+    # Ensure IANA time zones are available on Windows for cron schedules with tz=...
+    "tzdata>=2024.1; platform_system == \"Windows\"",
     "python-telegram-bot>=21.0",
 ]
 

@@ -1,22 +1,10 @@
 from datetime import datetime, timezone
 
-import pytest
-
 from nanobot.cron.service import _compute_next_run
 from nanobot.cron.types import CronSchedule
 
 
-pytest.importorskip("croniter")
-
-
 def test_cron_schedule_respects_timezone_field() -> None:
-    try:
-        from zoneinfo import ZoneInfo
-
-        ZoneInfo("America/New_York")
-    except Exception:
-        pytest.skip("ZoneInfo database not available for America/New_York in this environment")
-
     # Feb 6, 2026 is standard time in New York (UTC-5).
     # If "now" is 13:30 UTC, then the next 09:00 America/New_York is 14:00 UTC same day.
     now_dt_utc = datetime(2026, 2, 6, 13, 30, tzinfo=timezone.utc)

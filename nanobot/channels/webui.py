@@ -380,7 +380,7 @@ class WebUIChannel(BaseChannel):
         if msg_type in ("hello",):
             return
 
-        if msg_type in ("new_chat", "new_session", "new-session", "new-session"):
+        if msg_type in ("new_chat", "new_session", "new-session"):
             new_chat_id = self._new_id("c")
             async with self._clients_lock:
                 old = self._clients.get(ws)

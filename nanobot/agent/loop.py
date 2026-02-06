@@ -353,11 +353,12 @@ class AgentLoop:
                 )
 
                 abort_loop = False
-                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
-                for tool_call, result in zip(response.tool_calls, results):
+                for tool_call in response.tool_calls:
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
                     )
+                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
+                for tool_call, result in zip(response.tool_calls, results):
                     messages = self.context.add_tool_result(
                         messages,
                         tool_call.id,
