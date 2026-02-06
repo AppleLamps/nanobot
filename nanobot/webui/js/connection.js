@@ -116,7 +116,9 @@ export function connect() {
       if (data.session_key && String(data.session_key) !== state.sessionKey) return;
       state.currentModel = String(data.model || "").trim();
       const v = String(data.verbosity || "").trim();
+      const rw = data.restrict_workspace;
       if (v) state.verbosity = v;
+      if (typeof rw === "boolean") state.restrictWorkspace = rw;
       if (state.currentModel) {
         state.modelDefault = state.currentModel;
         persist("modelDefault", state.modelDefault);
@@ -124,6 +126,8 @@ export function connect() {
       if (dom.modelPill) dom.modelPill.textContent = state.currentModel || "default";
       if (dom.modelInput) dom.modelInput.value = state.currentModel || state.modelDefault || "";
       if (dom.verbositySelect) dom.verbositySelect.value = state.verbosity || "normal";
+      if (dom.restrictWorkspaceToggle)
+        dom.restrictWorkspaceToggle.checked = !!state.restrictWorkspace;
 
       if (
         state.pendingNewChatDefaultModel &&
@@ -145,8 +149,23 @@ export function connect() {
           state.ws.send(JSON.stringify({ type: "set_verbosity", verbosity: state.verbosity }));
         } catch (_) { }
       }
+      if (
+        state.pendingNewChatDefaultRestrictWorkspace &&
+        state.lastHistoryEmpty &&
+        typeof rw !== "boolean"
+      ) {
+        try {
+          state.ws.send(
+            JSON.stringify({
+              type: "set_restrict_workspace",
+              restrict_workspace: !!state.restrictWorkspace,
+            })
+          );
+        } catch (_) { }
+      }
       state.pendingNewChatDefaultModel = false;
       state.pendingNewChatDefaultVerbosity = false;
+      state.pendingNewChatDefaultRestrictWorkspace = false;
       return;
     }
 

@@ -164,6 +164,29 @@ function applyVerbosity() {
   }
 }
 
+function applyRestrictWorkspace() {
+  if (!dom.restrictWorkspaceToggle) return;
+  state.restrictWorkspace = !!dom.restrictWorkspaceToggle.checked;
+  persist("restrictWorkspace", state.restrictWorkspace ? "true" : "false");
+
+  if (!state.ws || state.ws.readyState !== 1) {
+    toastMsg("Not connected yet.");
+    return;
+  }
+
+  try {
+    state.ws.send(
+      JSON.stringify({
+        type: "set_restrict_workspace",
+        restrict_workspace: !!state.restrictWorkspace,
+      })
+    );
+    toastMsg("Workspace restriction updated.");
+  } catch (_) {
+    toastMsg("Failed to update restriction.");
+  }
+}
+
 async function downloadLogs() {
   const qs = new URLSearchParams();
   if (state.token) qs.set("token", state.token);
@@ -246,6 +269,7 @@ if (dom.newChatBtn)
     if (state.ws && state.ws.readyState === 1) {
       state.pendingNewChatDefaultModel = true;
       state.pendingNewChatDefaultVerbosity = true;
+      state.pendingNewChatDefaultRestrictWorkspace = true;
       renderHistory([]);
       state.ws.send(JSON.stringify({ type: "new_chat" }));
       toastMsg("New session.");
@@ -259,6 +283,7 @@ if (dom.newChatBtn)
     if (dom.sessionKey) dom.sessionKey.textContent = state.sessionKey;
     state.pendingNewChatDefaultModel = true;
     state.pendingNewChatDefaultVerbosity = true;
+    state.pendingNewChatDefaultRestrictWorkspace = true;
     renderHistory([]);
     connect();
     toastMsg("New session.");
@@ -314,6 +339,8 @@ if (dom.settingsModal)
   });
 if (dom.verbositySelect)
   dom.verbositySelect.addEventListener("change", applyVerbosity);
+if (dom.restrictWorkspaceToggle)
+  dom.restrictWorkspaceToggle.addEventListener("change", applyRestrictWorkspace);
 if (dom.downloadLogsBtn)
   dom.downloadLogsBtn.addEventListener("click", downloadLogs);
 
@@ -344,6 +371,8 @@ if (dom.sessionKey) dom.sessionKey.textContent = state.sessionKey;
 if (dom.modelPill) dom.modelPill.textContent = "default";
 if (dom.modelInput) dom.modelInput.value = "";
 if (dom.verbositySelect) dom.verbositySelect.value = state.verbosity || "normal";
+if (dom.restrictWorkspaceToggle)
+  dom.restrictWorkspaceToggle.checked = !!state.restrictWorkspace;
 
 fillModelDatalist();
 autogrow();

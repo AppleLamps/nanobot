@@ -30,6 +30,7 @@ export const dom = {
   settingsClose: $("settings-close"),
   verbositySelect: $("verbosity"),
   downloadLogsBtn: $("download-logs"),
+  restrictWorkspaceToggle: $("restrict-workspace"),
   clearBtn: $("clear"),
   newChatBtn: $("new-chat"),
   sessionsBtn: $("sessions"),
@@ -69,7 +70,9 @@ export const state = {
   currentModel: "",
   modelDefault: "",
   verbosity: "normal",
+  restrictWorkspace: true,
   pendingNewChatDefaultVerbosity: false,
+  pendingNewChatDefaultRestrictWorkspace: false,
 };
 
 /* Utilities */
@@ -104,6 +107,10 @@ storage.setItem("nanobot.webui.sessionKey", state.sessionKey);
 
 state.modelDefault = (qs.get("model") || storage.getItem("nanobot.webui.modelDefault") || "").trim();
 state.verbosity = (qs.get("verbosity") || storage.getItem("nanobot.webui.verbosity") || "normal").trim();
+state.restrictWorkspace =
+  String(
+    qs.get("restrict") || storage.getItem("nanobot.webui.restrictWorkspace") || "true"
+  ).trim().toLowerCase() !== "false";
 
 /* Persist helpers */
 export function persist(key, value) {

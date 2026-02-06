@@ -295,6 +295,7 @@ class WebUIChannel(BaseChannel):
         """Send per-session settings (currently just model) to a client."""
         model = ""
         verbosity = ""
+        restrict_workspace: bool | None = None
         try:
             session = self._sessions.get_or_create(session_key)
             m = session.metadata.get("model")
@@ -303,6 +304,9 @@ class WebUIChannel(BaseChannel):
             v = session.metadata.get("verbosity")
             if isinstance(v, str):
                 verbosity = v.strip()
+            rw = session.metadata.get("restrict_workspace")
+            if isinstance(rw, bool):
+                restrict_workspace = rw
         except Exception:
             model = ""
         await ws.send(
@@ -312,6 +316,7 @@ class WebUIChannel(BaseChannel):
                     "session_key": session_key,
                     "model": model,
                     "verbosity": verbosity,
+                    "restrict_workspace": restrict_workspace,
                 }
             )
         )
@@ -630,6 +635,38 @@ class WebUIChannel(BaseChannel):
                 await self._sessions.save_async(session)
             except Exception as e:
                 await ws.send(json.dumps({"type": "error", "error": f"failed to save verbosity: {e}"}))
+                return
+
+            await self._broadcast_settings(session_key=key.session_key)
+            return
+
+        if msg_type in ("set_restrict_workspace", "restrict_workspace"):
+            rw = data.get("restrict_workspace")
+            if isinstance(rw, str):
+                rw = rw.strip().lower()
+                if rw in ("true", "1", "yes", "on"):
+                    rw = True
+                elif rw in ("false", "0", "no", "off"):
+                    rw = False
+                else:
+                    rw = None
+            if not isinstance(rw, bool):
+                await ws.send(json.dumps({"type": "error", "error": "invalid restrict_workspace"}))
+                return
+
+            async with self._clients_lock:
+                key = self._clients.get(ws)
+            if key is None:
+                return
+
+            try:
+                session = self._sessions.get_or_create(key.session_key)
+                session.metadata["restrict_workspace"] = rw
+                await self._sessions.save_async(session)
+            except Exception as e:
+                await ws.send(
+                    json.dumps({"type": "error", "error": f"failed to save restrict_workspace: {e}"})
+                )
                 return
 
             await self._broadcast_settings(session_key=key.session_key)

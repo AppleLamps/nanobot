@@ -125,15 +125,51 @@ class AgentLoop:
         channel: str,
         chat_id: str,
         allowed_tools: list[str] | None,
+        restrict_workspace: bool | None,
     ) -> ToolRegistry:
         """Build a request-scoped tool registry (no shared mutable per-chat state)."""
         reg = ToolRegistry()
 
-        # Copy all registered tools, but always override message/spawn with request-scoped instances.
-        for tool in self.tools.iter_tools():
-            if tool.name in ("message", "spawn"):
-                continue
-            reg.register(tool)
+        if isinstance(restrict_workspace, bool):
+            reg.register(
+                ReadFileTool(
+                    workspace_root=self.workspace,
+                    restrict_to_workspace=restrict_workspace,
+                )
+            )
+            reg.register(
+                WriteFileTool(
+                    workspace_root=self.workspace,
+                    restrict_to_workspace=restrict_workspace,
+                )
+            )
+            reg.register(
+                EditFileTool(
+                    workspace_root=self.workspace,
+                    restrict_to_workspace=restrict_workspace,
+                )
+            )
+            reg.register(
+                ListDirTool(
+                    workspace_root=self.workspace,
+                    restrict_to_workspace=restrict_workspace,
+                )
+            )
+            reg.register(
+                ExecTool(
+                    working_dir=str(self.workspace),
+                    timeout=self.exec_config.timeout,
+                    restrict_to_workspace=restrict_workspace,
+                )
+            )
+            reg.register(WebSearchTool(api_key=self.brave_api_key))
+            reg.register(WebFetchTool())
+        else:
+            # Copy all registered tools, but always override message/spawn with request-scoped instances.
+            for tool in self.tools.iter_tools():
+                if tool.name in ("message", "spawn"):
+                    continue
+                reg.register(tool)
 
         msg_tool = MessageTool(
             send_callback=self.bus.publish_outbound,
@@ -510,6 +546,7 @@ class AgentLoop:
         session_key = session_key_override or (meta_override if isinstance(meta_override, str) and meta_override else None) or msg.session_key
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
+        restrict_workspace = session.metadata.get("restrict_workspace")
 
         # Per-session model override (set by WebUI model switcher, etc.).
         chosen_model: str | None = None
@@ -532,6 +569,7 @@ class AgentLoop:
             channel=msg.channel,
             chat_id=msg.chat_id,
             allowed_tools=allowed_tools if isinstance(allowed_tools, list) else None,
+            restrict_workspace=restrict_workspace if isinstance(restrict_workspace, bool) else None,
         )
 
         messages = self.context.build_messages(
@@ -581,6 +619,7 @@ class AgentLoop:
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
+        restrict_workspace = session.metadata.get("restrict_workspace")
 
         chosen_model: str | None = None
         try:
@@ -594,6 +633,7 @@ class AgentLoop:
             channel=origin_channel,
             chat_id=origin_chat_id,
             allowed_tools=allowed_tools if isinstance(allowed_tools, list) else None,
+            restrict_workspace=restrict_workspace if isinstance(restrict_workspace, bool) else None,
         )
 
         messages = self.context.build_messages(
