@@ -143,18 +143,41 @@ class WebUIChannel(BaseChannel):
 
     async def _process_request(self, *args: Any) -> Any:
         """Serve a tiny static web app from the same port as the WebSocket server."""
+        is_legacy_signature = len(args) >= 2 and isinstance(args[0], str)
         path, _request_headers = self._extract_request_path_and_headers(*args)
 
         parsed = urlparse(path)
         qs = parse_qs(parsed.query or "")
         token = (qs.get("token") or [""])[0]
 
+        def _reply(status: int, headers: list[tuple[str, str]], body: bytes) -> Any:
+            """
+            websockets>=12 expects websockets.http11.Response from process_request when using
+            the (connection, request) signature. Older versions / legacy signature accept a tuple.
+            """
+            if is_legacy_signature:
+                return (status, headers, body)
+            try:
+                from websockets.datastructures import Headers
+                from websockets.http11 import Response
+
+                reasons = {
+                    200: "OK",
+                    401: "Unauthorized",
+                    404: "Not Found",
+                    500: "Internal Server Error",
+                }
+                return Response(status, reasons.get(status, ""), Headers(headers), body)
+            except Exception:
+                # Best-effort fallback.
+                return (status, headers, body)
+
         if parsed.path == "/ws":
             return None
 
         if parsed.path in ("/healthz", "/health"):
             body = b"ok\n"
-            return (
+            return _reply(
                 200,
                 [
                     ("Content-Type", "text/plain; charset=utf-8"),
@@ -166,7 +189,7 @@ class WebUIChannel(BaseChannel):
 
         if self._require_token() and not self._token_ok(token):
             body = b"Unauthorized. Provide ?token=... (channels.webui.authToken)\n"
-            return (
+            return _reply(
                 401,
                 [
                     ("Content-Type", "text/plain; charset=utf-8"),
@@ -180,11 +203,14 @@ class WebUIChannel(BaseChannel):
         if route in ("", "/"):
             route = "/index.html"
 
-        if route in ("/index.html", "/app.css", "/app.js"):
-            body = self._read_asset_bytes(route.lstrip("/"))
+        _ALLOWED_EXTS = {".html", ".css", ".js", ".svg"}
+        relpath = route.lstrip("/")
+        ext = ("." + relpath.rsplit(".", 1)[-1]).lower() if "." in relpath else ""
+        if ".." not in relpath and ext in _ALLOWED_EXTS:
+            body = self._read_asset_bytes(relpath)
             if not body:
                 body = b"missing asset\n"
-                return (
+                return _reply(
                     500,
                     [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
                     body,
@@ -204,10 +230,10 @@ class WebUIChannel(BaseChannel):
                 ("Cache-Control", "no-store"),
                 ("Content-Security-Policy", csp),
             ]
-            return (200, headers, body)
+            return _reply(200, headers, body)
 
         body = b"Not found\n"
-        return (
+        return _reply(
             404,
             [
                 ("Content-Type", "text/plain; charset=utf-8"),
@@ -220,9 +246,31 @@ class WebUIChannel(BaseChannel):
     def _new_id(self, prefix: str) -> str:
         return f"{prefix}:{secrets.token_hex(8)}"
 
-    async def _send_history(self, ws: Any, *, chat_id: str, session_key: str) -> None:
+    async def _send_settings(self, ws: Any, *, session_key: str) -> None:
+        """Send per-session settings (currently just model) to a client."""
+        model = ""
         try:
             session = self._sessions.get_or_create(session_key)
+            m = session.metadata.get("model")
+            if isinstance(m, str):
+                model = m.strip()
+        except Exception:
+            model = ""
+        await ws.send(json.dumps({"type": "settings", "session_key": session_key, "model": model}))
+
+    async def _broadcast_settings(self, *, session_key: str) -> None:
+        """Broadcast settings to all connected clients currently bound to session_key."""
+        async with self._clients_lock:
+            targets = [ws for ws, key in self._clients.items() if key.session_key == session_key]
+        for ws in targets:
+            try:
+                await self._send_settings(ws, session_key=session_key)
+            except Exception:
+                pass
+
+    async def _send_history(self, ws: Any, *, chat_id: str, session_key: str) -> None:
+        try:
+            session = self._sessions.get_or_create(session_key, force_reload=True)
             history = session.get_history(max_messages=200)
         except Exception:
             history = []
@@ -355,6 +403,7 @@ class WebUIChannel(BaseChannel):
 
         await ws.send(json.dumps({"type": "session", "chat_id": key.chat_id, "sender_id": key.sender_id, "session_key": key.session_key}))
         await self._send_history(ws, chat_id=key.chat_id, session_key=key.session_key)
+        await self._send_settings(ws, session_key=key.session_key)
         logger.info(f"WebUI client connected chat_id={key.chat_id} sender_id={key.sender_id}")
 
         try:
@@ -428,6 +477,7 @@ class WebUIChannel(BaseChannel):
                     self._by_chat.setdefault(new_chat_id, set()).add(ws)
             await ws.send(json.dumps({"type": "session", "chat_id": new_chat_id, "session_key": f"{self.name}:{new_chat_id}"}))
             await self._send_history(ws, chat_id=new_chat_id, session_key=f"{self.name}:{new_chat_id}")
+            await self._send_settings(ws, session_key=f"{self.name}:{new_chat_id}")
             return
 
         if msg_type in ("list_sessions", "sessions"):
@@ -456,6 +506,38 @@ class WebUIChannel(BaseChannel):
 
             await ws.send(json.dumps({"type": "session", "chat_id": new_chat_id, "session_key": target}))
             await self._send_history(ws, chat_id=new_chat_id, session_key=target)
+            await self._send_settings(ws, session_key=target)
+            return
+
+        if msg_type in ("set_model", "model", "setmodel"):
+            model = data.get("model")
+            if model is None:
+                model = ""
+            if not isinstance(model, str):
+                return
+            model = model.strip()
+            if len(model) > 160:
+                await ws.send(json.dumps({"type": "error", "error": "model name too long"}))
+                return
+
+            async with self._clients_lock:
+                key = self._clients.get(ws)
+            if key is None:
+                return
+
+            # Persist per-session preference.
+            try:
+                session = self._sessions.get_or_create(key.session_key)
+                if model:
+                    session.metadata["model"] = model
+                else:
+                    session.metadata.pop("model", None)
+                await self._sessions.save_async(session)
+            except Exception as e:
+                await ws.send(json.dumps({"type": "error", "error": f"failed to save model: {e}"}))
+                return
+
+            await self._broadcast_settings(session_key=key.session_key)
             return
 
         if msg_type in ("upload_init",):
@@ -607,6 +689,11 @@ class WebUIChannel(BaseChannel):
         if key is None:
             return
 
+        model = data.get("model")
+        model_s: str | None = None
+        if isinstance(model, str) and model.strip():
+            model_s = model.strip()
+
         media = data.get("media")
         media_paths: list[str] = []
         if isinstance(media, list):
@@ -628,5 +715,9 @@ class WebUIChannel(BaseChannel):
             chat_id=key.chat_id,
             content=content,
             media=media_paths,
-            metadata={"client": "webui", "session_key": key.session_key},
+            metadata={
+                "client": "webui",
+                "session_key": key.session_key,
+                **({"model": model_s} if model_s else {}),
+            },
         )

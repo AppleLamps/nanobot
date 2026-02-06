@@ -321,10 +321,13 @@ class AgentLoop:
         tools: ToolRegistry,
         tool_error_backoff_message: str,
         no_response_message: str,
+        model: str | None = None,
     ) -> str:
         iteration = 0
         final_content: str | None = None
         tool_error_streak = 0
+
+        chosen_model = (model or "").strip() or self.model
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -334,7 +337,7 @@ class AgentLoop:
             response = await self.provider.chat(
                 messages=messages,
                 tools=tools.get_definitions(),
-                model=self.model,
+                model=chosen_model,
                 max_tokens=max_tokens_used,
                 temperature=self.temperature,
             )
@@ -423,6 +426,23 @@ class AgentLoop:
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
 
+        # Per-session model override (set by WebUI model switcher, etc.).
+        chosen_model: str | None = None
+        try:
+            m = session.metadata.get("model")
+            if isinstance(m, str) and m.strip():
+                chosen_model = m.strip()
+        except Exception:
+            chosen_model = None
+        if not chosen_model:
+            try:
+                if isinstance(msg.metadata, dict):
+                    m2 = msg.metadata.get("model")
+                    if isinstance(m2, str) and m2.strip():
+                        chosen_model = m2.strip()
+            except Exception:
+                chosen_model = None
+
         tools = self._build_tools_for_request(
             channel=msg.channel,
             chat_id=msg.chat_id,
@@ -447,6 +467,7 @@ class AgentLoop:
                 "Please rephrase or provide more specific inputs."
             ),
             no_response_message="I've completed processing but have no response to give.",
+            model=chosen_model,
         )
 
         session.add_message("user", msg.content)
@@ -473,6 +494,14 @@ class AgentLoop:
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
 
+        chosen_model: str | None = None
+        try:
+            m = session.metadata.get("model")
+            if isinstance(m, str) and m.strip():
+                chosen_model = m.strip()
+        except Exception:
+            chosen_model = None
+
         tools = self._build_tools_for_request(
             channel=origin_channel,
             chat_id=origin_chat_id,
@@ -497,6 +526,7 @@ class AgentLoop:
                 "Please rephrase or provide more specific inputs."
             ),
             no_response_message="Background task completed.",
+            model=chosen_model,
         )
 
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")

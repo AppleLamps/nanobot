@@ -13,7 +13,8 @@ from nanobot import __version__, __logo__
 app = typer.Typer(
     name="nanobot",
     help=f"{__logo__} nanobot - Personal AI Assistant",
-    no_args_is_help=True,
+    no_args_is_help=False,
+    invoke_without_command=True,
 )
 
 console = Console()
@@ -45,14 +46,46 @@ def version_callback(value: bool):
         raise typer.Exit()
 
 
-@app.callback()
+@app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         None, "--version", "-v", callback=version_callback, is_eager=True
     ),
 ):
     """nanobot - Personal AI Assistant."""
-    pass
+    if ctx.invoked_subcommand is not None:
+        return
+
+    from InquirerPy import inquirer
+
+    commands = [
+        {"name": "onboard  — Initialize nanobot configuration and workspace", "value": "onboard"},
+        {"name": "gateway  — Start the nanobot gateway", "value": "gateway"},
+        {"name": "agent    — Interact with the agent directly", "value": "agent"},
+        {"name": "status   — Show nanobot status", "value": "status"},
+        {"name": "channels — Manage channels", "value": "channels"},
+        {"name": "skills   — Manage skills", "value": "skills"},
+        {"name": "cron     — Manage scheduled tasks", "value": "cron"},
+    ]
+
+    console.print(f"\n  {__logo__} [bold]nanobot[/bold] — Personal AI Assistant\n")
+
+    selected = inquirer.select(
+        message="Select a command:",
+        choices=commands,
+        default="gateway",
+        pointer="❯",
+    ).execute()
+
+    if selected is None:
+        raise typer.Exit()
+
+    # Re-invoke the CLI with the selected command
+    import subprocess
+    raise SystemExit(
+        subprocess.run([sys.executable, "-m", "nanobot", selected]).returncode
+    )
 
 
 # ============================================================================
@@ -92,7 +125,7 @@ def onboard(
         None, "--brave-key", envvar="BRAVE_API_KEY", help="Brave Search API key (enables web.search tool)."
     ),
     model: str | None = typer.Option(
-        None, "--model", help="Default model (e.g. anthropic/claude-opus-4-5)."
+        None, "--model", help="Default model (e.g. openai/gpt-oss-120b:exacto)."
     ),
 ):
     """Initialize nanobot configuration and workspace."""
@@ -145,39 +178,89 @@ def onboard(
         config.agents.defaults.model = model.strip() or config.agents.defaults.model
 
     if do_prompt:
-        if not config.providers.openrouter.api_key:
-            key = _prompt_optional_secret("OpenRouter API key (recommended)")
-            if key:
-                config.providers.openrouter.api_key = key
-        if not config.providers.anthropic.api_key:
-            key = _prompt_optional_secret("Anthropic API key")
-            if key:
-                config.providers.anthropic.api_key = key
-        if not config.providers.openai.api_key:
-            key = _prompt_optional_secret("OpenAI API key")
-            if key:
-                config.providers.openai.api_key = key
-        if not config.providers.gemini.api_key:
-            key = _prompt_optional_secret("Gemini API key")
-            if key:
-                config.providers.gemini.api_key = key
-        if not config.providers.groq.api_key:
-            key = _prompt_optional_secret(
-                "Groq API key (optional, also used for voice transcription)"
-            )
-            if key:
-                config.providers.groq.api_key = key
-        if not config.providers.zhipu.api_key:
-            key = _prompt_optional_secret("Zhipu API key")
-            if key:
-                config.providers.zhipu.api_key = key
+        from InquirerPy import inquirer
 
-        if not config.providers.vllm.api_base:
-            base = _prompt_optional_text(
-                "vLLM / local OpenAI-compatible base URL (e.g. http://localhost:8000/v1)"
-            )
-            if base:
-                config.providers.vllm.api_base = base
+        # Map provider names to config attrs, key URLs, and suggested default models.
+        _providers = {
+            "openrouter": {
+                "label": "OpenRouter (recommended — access many models with one key)",
+                "config_attr": "openrouter",
+                "key_url": "https://openrouter.ai/keys",
+                "default_model": "qwen/qwen3-coder-next",
+            },
+            "anthropic": {
+                "label": "Anthropic",
+                "config_attr": "anthropic",
+                "key_url": "https://console.anthropic.com/settings/keys",
+                "default_model": "anthropic/claude-sonnet-4-20250514",
+            },
+            "openai": {
+                "label": "OpenAI",
+                "config_attr": "openai",
+                "key_url": "https://platform.openai.com/api-keys",
+                "default_model": "openai/gpt-4o",
+            },
+            "gemini": {
+                "label": "Google Gemini",
+                "config_attr": "gemini",
+                "key_url": "https://aistudio.google.com/apikey",
+                "default_model": "gemini/gemini-2.5-flash",
+            },
+            "groq": {
+                "label": "Groq",
+                "config_attr": "groq",
+                "key_url": "https://console.groq.com/keys",
+                "default_model": "groq/llama-3.3-70b-versatile",
+            },
+            "zhipu": {
+                "label": "Zhipu",
+                "config_attr": "zhipu",
+                "key_url": None,
+                "default_model": "zhipu/glm-4-plus",
+            },
+            "vllm": {
+                "label": "vLLM / Local (OpenAI-compatible endpoint)",
+                "config_attr": "vllm",
+                "key_url": None,
+                "default_model": None,
+            },
+        }
+
+        provider_choices = [
+            {"name": info["label"], "value": name}
+            for name, info in _providers.items()
+        ]
+
+        chosen = inquirer.select(
+            message="Choose your LLM provider:",
+            choices=provider_choices,
+            default="openrouter",
+            pointer="❯",
+        ).execute()
+
+        info = _providers[chosen]
+        prov_cfg = getattr(config.providers, info["config_attr"])
+
+        if chosen == "vllm":
+            # vLLM needs a base URL, not an API key.
+            if not prov_cfg.api_base:
+                base = _prompt_optional_text(
+                    "Base URL (e.g. http://localhost:8000/v1)"
+                )
+                if base:
+                    prov_cfg.api_base = base
+        else:
+            if not prov_cfg.api_key:
+                url_hint = f"  Get one at: {info['key_url']}" if info["key_url"] else ""
+                if url_hint:
+                    console.print(f"[dim]{url_hint}[/dim]")
+                key = _prompt_optional_secret(f"{info['label']} API key")
+                if key:
+                    prov_cfg.api_key = key
+
+        # Set a sensible default model for the chosen provider.
+        if info["default_model"] and not model:
+            config.agents.defaults.model = info["default_model"]
 
         # Optional: web search API key (Brave Search).
         if not config.tools.web.search.api_key:
@@ -185,13 +268,13 @@ def onboard(
             if brave:
                 config.tools.web.search.api_key = brave
 
-        # Optional: default model
+        # Optional: override default model
         if not model:
-            selected = typer.prompt(
+            selected_model = typer.prompt(
                 "Default model", default=config.agents.defaults.model, show_default=True
             )
             config.agents.defaults.model = (
-                (selected or "").strip() or config.agents.defaults.model
+                (selected_model or "").strip() or config.agents.defaults.model
             )
 
     save_config(config)
@@ -281,6 +364,39 @@ Task format examples:
 - [ ] Check weather forecast for today
 - [ ] Review today's calendar at 9am
 ```
+
+## Skills
+
+Skills are modular packages that extend your capabilities with specialized knowledge, workflows, and tools.
+
+### Using Skills
+
+- Your system prompt lists available skills under `<skills>`.
+- To use a skill, read its SKILL.md with `read_file` to get the full instructions.
+- Skills may contain bundled scripts, references, and assets in subdirectories.
+
+### Creating Skills
+
+When a user asks you to create a skill, use the `skill-creator` skill for guidance.
+To read the full skill-creator instructions:
+```
+read_file("<skill-creator-dir>/SKILL.md")
+```
+The skill-creator skill contains `scripts/init_skill.py` and `scripts/package_skill.py` for scaffolding and packaging.
+
+Quick scaffold (without loading skill-creator): use `exec` to run:
+```
+nanobot skills init <skill-name> --description "what the skill does"
+```
+
+### Installing Skills
+
+When a user provides a `.skill` file, install it with `exec`:
+```
+nanobot skills install <path-to-file.skill>
+```
+
+Skills are installed to the workspace `skills/` directory and are available immediately.
 """,
         "SOUL.md": """# Soul
 
@@ -348,6 +464,20 @@ Notes:
 ## Background Tasks
 
 - `spawn(task, label?)`: spawn a subagent for longer work
+
+## Skills Management (CLI)
+
+Use `exec` to manage skills:
+
+- `nanobot skills init <name> -d "description"`: scaffold a new skill in workspace
+- `nanobot skills list`: list all available skills
+- `nanobot skills install <file.skill>`: install a .skill package
+- `nanobot skills install <file.skill> --force`: overwrite an existing skill
+
+### Skill Creation Scripts (from skill-creator skill)
+
+- `python <skill-creator-dir>/scripts/init_skill.py <name> --path <dir>`: full scaffold with optional resources
+- `python <skill-creator-dir>/scripts/package_skill.py <skill-dir>`: validate and package into .skill file
 """,
     }
     
@@ -413,6 +543,7 @@ This file is used when `memoryScope` is set to `session` and you're chatting fro
 @app.command()
 def gateway(
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
+    webui: bool = typer.Option(False, "--webui", help="Enable the local Web UI channel"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the nanobot gateway."""
@@ -432,6 +563,10 @@ def gateway(
     console.print(f"{__logo__} Starting nanobot gateway on port {port}...")
     
     config = load_config()
+
+    # Convenience: allow enabling WebUI without editing config.json.
+    if webui and getattr(config.channels, "webui", None):
+        config.channels.webui.enabled = True
     
     # Create components
     bus = MessageBus()
@@ -505,16 +640,19 @@ def gateway(
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
+        console.print("[dim]Tip: run `nanobot gateway --webui` or enable a channel in ~/.nanobot/config.json[/dim]")
 
     # Web UI hint (served by the webui channel itself).
+    webui_url: str | None = None
     try:
         if getattr(config.channels, "webui", None) and config.channels.webui.enabled:
             host = (config.channels.webui.host or "127.0.0.1").strip()
             wport = int(config.channels.webui.port or 18791)
-            token_hint = ""
+            token_param = ""
             if (config.channels.webui.auth_token or "").strip():
-                token_hint = "?token=…"
-            console.print(f"[green]✓[/green] WebUI: http://{host}:{wport}/{token_hint}")
+                token_param = f"?token={config.channels.webui.auth_token}"
+            webui_url = f"http://{host}:{wport}/{token_param}"
+            console.print(f"[green]✓[/green] WebUI: {webui_url}")
     except Exception:
         # Never fail gateway startup due to a hint.
         pass
@@ -524,7 +662,12 @@ def gateway(
         console.print(f"[green]✓[/green] Cron: {cron_status['jobs']} scheduled jobs")
     
     console.print(f"[green]✓[/green] Heartbeat: every 30m")
-    
+
+    # Auto-open WebUI in the default browser.
+    if webui_url:
+        import webbrowser
+        webbrowser.open(webui_url)
+
     async def run():
         agent_task: asyncio.Task | None = None
         channels_task: asyncio.Task | None = None
@@ -685,6 +828,87 @@ Describe what this skill helps the agent do.
     console.print(f"[green]✓[/green] Created skill at {skill_file}")
 
 
+@skills_app.command("list")
+def skills_list():
+    """List all available skills."""
+    from nanobot.agent.skills import SkillsLoader
+    from nanobot.utils.helpers import get_workspace_path
+
+    workspace = get_workspace_path()
+    loader = SkillsLoader(workspace)
+    all_skills = loader.list_skills(filter_unavailable=False)
+
+    if not all_skills:
+        console.print("No skills found.")
+        return
+
+    table = Table(title="Available Skills")
+    table.add_column("Name", style="cyan")
+    table.add_column("Source", style="yellow")
+    table.add_column("Description")
+
+    for s in all_skills:
+        meta = loader.get_skill_metadata(s["name"])
+        desc = (meta.get("description", "") if meta else "") or "[dim]—[/dim]"
+        if len(desc) > 80:
+            desc = desc[:77] + "..."
+        table.add_row(s["name"], s["source"], desc)
+
+    console.print(table)
+
+
+@skills_app.command("install")
+def skills_install_file(
+    path: str = typer.Argument(..., help="Path to a .skill file (zip archive)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing skill"),
+):
+    """Install a skill from a .skill package file."""
+    import zipfile
+
+    from nanobot.utils.helpers import get_skills_path
+
+    skill_path = Path(path).expanduser().resolve()
+    if not skill_path.exists():
+        console.print(f"[red]File not found: {skill_path}[/red]")
+        raise typer.Exit(1)
+
+    if not zipfile.is_zipfile(skill_path):
+        console.print(f"[red]Not a valid .skill (zip) file: {skill_path}[/red]")
+        raise typer.Exit(1)
+
+    skills_dir = get_skills_path()
+
+    with zipfile.ZipFile(skill_path, "r") as zf:
+        # Detect skill name from the top-level directory in the archive
+        names = zf.namelist()
+        top_dirs = {n.split("/")[0] for n in names if "/" in n}
+        if len(top_dirs) != 1:
+            console.print("[red]Invalid .skill archive: expected exactly one top-level directory.[/red]")
+            raise typer.Exit(1)
+
+        skill_name = top_dirs.pop()
+        target_dir = skills_dir / skill_name
+
+        if target_dir.exists() and not force:
+            console.print(
+                f"[red]Skill '{skill_name}' already exists at {target_dir}[/red]\n"
+                f"Use --force to overwrite."
+            )
+            raise typer.Exit(1)
+
+        if target_dir.exists():
+            import shutil
+            shutil.rmtree(target_dir)
+
+        zf.extractall(skills_dir)
+
+    # Verify SKILL.md was extracted
+    if not (target_dir / "SKILL.md").exists():
+        console.print(f"[red]Warning: No SKILL.md found in extracted skill '{skill_name}'[/red]")
+    else:
+        console.print(f"[green]✓[/green] Installed skill '{skill_name}' to {target_dir}")
+
+
 @channels_app.command("status")
 def channels_status():
     """Show channel status."""
@@ -724,6 +948,16 @@ def channels_status():
         "✓" if fs.enabled else "✗",
         fs_config
     )
+
+    # WebUI
+    if getattr(config.channels, "webui", None):
+        wu = config.channels.webui
+        wu_config = f"{wu.host}:{wu.port}"
+        table.add_row(
+            "WebUI",
+            "✓" if wu.enabled else "✗",
+            wu_config,
+        )
 
     console.print(table)
 

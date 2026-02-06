@@ -12,7 +12,7 @@
   </p>
 </div>
 
-🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [Clawdbot](https://github.com/openclaw/openclaw) 
+🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [Clawdbot](https://github.com/openclaw/openclaw)
 
 ⚡️ Delivers core agent functionality in about **~6,000** lines of Python (excluding tests) — **~99% smaller** than Clawdbot's 430k+ lines.
 
@@ -20,7 +20,7 @@
 
 - **2026-02-01** 🎉 nanobot launched! Welcome to try 🐈 nanobot!
 
-## Key Features of nanobot:
+## Key Features of nanobot
 
 🪶 **Ultra-Lightweight**: About ~6,000 lines of Python (excluding tests) — ~99% smaller than Clawdbot - core functionality.
 
@@ -126,7 +126,6 @@ nanobot onboard
 }
 ```
 
-
 **3. Chat**
 
 ```bash
@@ -201,6 +200,7 @@ nanobot gateway
 - `http://127.0.0.1:18791/`
 
 Notes:
+
 - By default it binds to loopback (`127.0.0.1`) for safety.
 - If you bind to a non-loopback host (e.g. `0.0.0.0`), set `channels.webui.authToken` and open with `?token=...`.
 
@@ -218,6 +218,7 @@ Talk to your nanobot through Telegram, WhatsApp, or Feishu — anytime, anywhere
 <summary><b>Telegram</b> (Recommended)</summary>
 
 **1. Create a bot**
+
 - Open Telegram, search `@BotFather`
 - Send `/newbot`, follow prompts
 - Copy the token
@@ -293,6 +294,7 @@ pip install "nanobot-ai[feishu]"
 ```
 
 **1. Create a Feishu bot**
+
 - Visit [Feishu Open Platform](https://open.feishu.cn/app)
 - Create a new app → Enable **Bot** capability
 - **Permissions**: Add `im:message` (send messages)
@@ -378,7 +380,6 @@ nanobot indexes memory into `memory/memory.sqlite3` (SQLite with FTS when availa
 
 nanobot persists chat history as JSONL under `~/.nanobot/sessions/`. Session writes are locked and atomic, so concurrent chats (or multiple processes) don't corrupt the history.
 
-
 <details>
 <summary><b>Full config example</b></summary>
 
@@ -440,6 +441,9 @@ nanobot persists chat history as JSONL under `~/.nanobot/sessions/`. Session wri
 | `nanobot status` | Show status |
 | `nanobot channels login` | Link WhatsApp (scan QR) |
 | `nanobot channels status` | Show channel status |
+| `nanobot skills list` | List all available skills |
+| `nanobot skills init <name>` | Create a new skill scaffold |
+| `nanobot skills install <file>` | Install a .skill package |
 
 <details>
 <summary><b>Scheduled Tasks (Cron)</b></summary>
@@ -457,6 +461,59 @@ nanobot cron remove <job_id>
 ```
 
 </details>
+
+## 🧩 Skills
+
+Skills are modular packages that extend nanobot's capabilities with specialized knowledge, workflows, and bundled scripts. They let the agent handle domain-specific tasks it couldn't do with generic knowledge alone.
+
+### Built-in Skills
+
+| Skill | Description |
+|-------|-------------|
+| `github` | Interact with GitHub using the `gh` CLI |
+| `weather` | Get weather info using wttr.in and Open-Meteo |
+| `summarize` | Summarize URLs, files, and YouTube videos |
+| `tmux` | Remote-control tmux sessions |
+| `skill-creator` | Create and package new skills |
+
+### Using Skills
+
+Skills are loaded automatically. The agent sees a summary of all available skills in its system prompt and reads the full `SKILL.md` on demand when a task matches a skill's description.
+
+Custom skills go in `~/.nanobot/workspace/skills/<skill-name>/SKILL.md`.
+
+### Creating Skills
+
+Ask the agent to create a skill — it has a built-in `skill-creator` skill with full instructions. Or scaffold one manually:
+
+```bash
+# Quick scaffold
+nanobot skills init my-skill --description "Help with X"
+
+# The agent can also use the full init script for more options:
+# python nanobot/skills/skill-creator/scripts/init_skill.py my-skill --path ~/.nanobot/workspace/skills --resources scripts,references
+```
+
+### Installing Skills
+
+Install a `.skill` file (a zip archive containing a skill directory):
+
+```bash
+nanobot skills install path/to/my-skill.skill
+
+# Overwrite an existing skill
+nanobot skills install path/to/my-skill.skill --force
+```
+
+### Skill Structure
+
+```
+my-skill/
+├── SKILL.md          # Required: instructions + YAML frontmatter
+├── scripts/          # Optional: executable code
+├── references/       # Optional: docs loaded into context on demand
+└── assets/           # Optional: templates, images, etc.
+```
 
 ## 🐳 Docker
 
@@ -525,7 +582,6 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
   <img src="https://contrib.rocks/image?repo=HKUDS/nanobot&max=100&columns=12" />
 </a>
 
-
 ## ⭐ Star History
 
 <div align="center">
@@ -542,7 +598,6 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
   <em> Thanks for visiting ✨ nanobot!</em><br><br>
   <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.nanobot&style=for-the-badge&color=00d4ff" alt="Views">
 </p>
-
 
 <p align="center">
   <sub>nanobot is for educational, research, and technical exchange purposes only</sub>

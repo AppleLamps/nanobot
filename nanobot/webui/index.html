@@ -1,100 +1,160 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="light" />
-    <title>nanobot webui</title>
-    <link rel="stylesheet" href="/app.css" />
-  </head>
-  <body>
-    <div class="bg" aria-hidden="true"></div>
 
-    <main class="wrap">
-      <section class="shell" aria-label="nanobot webui chat">
-        <header class="topbar">
-          <div class="brand">
-            <div class="mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M6.2 16.7c1.2 1.6 3.1 2.7 5.3 2.7 3.7 0 6.8-3 6.8-6.8 0-2.6-1.5-4.9-3.7-6.0-.5-.2-1 .2-.9.7.1.5.2 1 .2 1.5 0 3.1-2.5 5.6-5.6 5.6-.8 0-1.6-.2-2.3-.5-.5-.2-1 .2-.9.7.2.7.6 1.4 1.1 2.1Z"
-                  fill="rgba(14,19,32,.92)"
-                />
-                <path
-                  d="M6.3 9.6c.7-1.3 2-2.3 3.6-2.7"
-                  stroke="rgba(14,19,32,.92)"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                />
-                <path
-                  d="M10.2 6.4c.4-.3 1-.5 1.6-.5 1.6 0 2.8 1.3 2.8 2.8 0 .4-.1.9-.3 1.2"
-                  stroke="rgba(14,19,32,.92)"
-                  stroke-width="1.6"
-                  stroke-linecap="round"
-                />
-              </svg>
-            </div>
-            <div class="title">
-              <div class="h">nanobot webui</div>
-              <div class="sub">
-                <span class="pill">
-                  <span id="dot" class="dot" aria-hidden="true"></span>
-                  <span id="status">connecting</span>
-                </span>
-                <span class="pill" title="Conversation">
-                  convo: <span id="sessionkey">…</span>
-                </span>
-              </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>nanobot</title>
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/topbar.css" />
+  <link rel="stylesheet" href="/css/chat.css" />
+  <link rel="stylesheet" href="/css/modal.css" />
+</head>
+
+<body>
+  <div class="bg" aria-hidden="true"></div>
+
+  <main class="wrap">
+    <section class="shell" aria-label="nanobot chat">
+      <header class="topbar">
+        <div class="brand">
+          <div class="mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none">
+              <path
+                d="M6.2 16.7c1.2 1.6 3.1 2.7 5.3 2.7 3.7 0 6.8-3 6.8-6.8 0-2.6-1.5-4.9-3.7-6.0-.5-.2-1 .2-.9.7.1.5.2 1 .2 1.5 0 3.1-2.5 5.6-5.6 5.6-.8 0-1.6-.2-2.3-.5-.5-.2-1 .2-.9.7.2.7.6 1.4 1.1 2.1Z"
+                fill="rgba(251,247,241,.96)" />
+              <path d="M6.3 9.6c.7-1.3 2-2.3 3.6-2.7" stroke="rgba(251,247,241,.96)" stroke-width="1.6"
+                stroke-linecap="round" />
+              <path d="M10.2 6.4c.4-.3 1-.5 1.6-.5 1.6 0 2.8 1.3 2.8 2.8 0 .4-.1.9-.3 1.2"
+                stroke="rgba(251,247,241,.96)" stroke-width="1.6" stroke-linecap="round" />
+            </svg>
+          </div>
+          <div class="title">
+            <div class="h">nanobot</div>
+            <div class="sub">
+              <span class="pill">
+                <span id="dot" class="dot" aria-hidden="true"></span>
+                <span id="status">connecting</span>
+              </span>
+              <span class="pill" title="Conversation">
+                convo: <span id="sessionkey">&hellip;</span>
+              </span>
+
             </div>
           </div>
-
-          <div class="actions">
-            <button class="btn" id="copy-link" title="Copy this session link">
-              Copy Link
-            </button>
-            <button class="btn" id="sessions" title="Browse saved conversations">
-              Sessions
-            </button>
-            <button class="btn" id="clear" title="Clear local history">Clear</button>
-            <button class="btn primary" id="new-chat" title="Start a new session">
-              New Chat
-            </button>
-          </div>
-        </header>
-
-        <div class="main">
-          <div class="feed" id="feed" aria-live="polite"></div>
-
-          <div class="jump" id="jump">
-            <button class="btn" id="jump-btn">Jump to latest</button>
-          </div>
-
-          <footer class="composer">
-            <div class="tray">
-              <input id="file" type="file" accept="image/*,application/pdf" multiple hidden />
-              <button class="btn" id="attach" title="Attach image or PDF">Attach</button>
-              <textarea
-                id="input"
-                placeholder="Ask nanobot. Shift+Enter for a newline."
-                rows="1"
-              ></textarea>
-              <button class="btn primary" id="send">Send</button>
-            </div>
-            <div class="attachments" id="attachments" aria-label="attachments"></div>
-            <div class="hint">
-              <div>
-                <span class="kbd">Enter</span> send,
-                <span class="kbd">Shift</span>+<span class="kbd">Enter</span> newline
-              </div>
-              <div id="latency"></div>
-            </div>
-          </footer>
         </div>
 
-        <div class="toast" id="toast" role="status" aria-live="polite"></div>
-      </section>
-    </main>
+        <div class="actions">
+          <button class="topbtn" id="copy-link" title="Copy this session link">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+            </svg>
+          </button>
+          <button class="topbtn" id="sessions" title="Browse saved conversations">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+            </svg>
+          </button>
+          <button class="topbtn" id="clear" title="Clear local history">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6" />
+              <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+            </svg>
+          </button>
+          <button class="topbtn primary" id="new-chat" title="Start a new session">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      </header>
 
-    <script src="/app.js"></script>
-  </body>
+      <div class="main">
+        <div class="feed" id="feed" aria-live="polite">
+          <div class="empty" id="empty" aria-hidden="true">
+            <div>
+              <div class="kicker">Warm paper, sharp ink</div>
+              <div class="headline">Ask nanobot anything.</div>
+              <div class="copy">
+                Tip: pick a model below the input if you want to switch styles or speed.
+              </div>
+              <div class="chips">
+                <button class="chipbtn" data-prompt="Summarize the repo in 10 bullets.">Summarize repo</button>
+                <button class="chipbtn" data-prompt="Review my last change for bugs and risks.">Review change</button>
+                <button class="chipbtn" data-prompt="Write a crisp TODO list for today.">Make TODOs</button>
+              </div>
+            </div>
+          </div>
+          <div class="rows" id="rows"></div>
+        </div>
+
+        <div class="jump" id="jump">
+          <button class="btn" id="jump-btn">Jump to latest</button>
+        </div>
+
+        <footer class="composer">
+          <div class="attachments" id="attachments" aria-label="attachments"></div>
+          <div class="input-wrap">
+            <input id="file" type="file" accept="image/*,application/pdf" multiple hidden />
+            <button class="attach-btn" id="attach" type="button" title="Attach image or PDF">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path
+                  d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+              </svg>
+            </button>
+            <textarea id="input" placeholder="Ask nanobot..." rows="1"></textarea>
+            <button class="send-btn" id="send" type="button" title="Send message">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="19" x2="12" y2="5" />
+                <polyline points="5 12 12 5 19 12" />
+              </svg>
+            </button>
+          </div>
+          <div class="composer-foot">
+            <div class="hint">
+              <span class="kbd">Enter</span> send,
+              <span class="kbd">Shift</span>+<span class="kbd">Enter</span> newline
+            </div>
+            <div class="model-row">
+              <input id="model" list="models" placeholder="Model: default (or type custom)" autocomplete="off"
+                spellcheck="false" />
+              <datalist id="models"></datalist>
+              <button class="btn-sm" id="apply-model" title="Set model">Set</button>
+            </div>
+            <div id="latency" class="latency"></div>
+          </div>
+        </footer>
+      </div>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+      <div class="modal" id="sessions-modal" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-label="Sessions">
+          <div class="modal-head">
+            <div class="modal-title">Sessions</div>
+            <button class="iconbtn" id="sessions-close" type="button">Close</button>
+          </div>
+          <div class="modal-body">
+            <div class="modal-sub">
+              Pick a conversation. This list is pulled from your local session store.
+            </div>
+            <div class="sessionlist" id="sessions-list"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+
 </html>

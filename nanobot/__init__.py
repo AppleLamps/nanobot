@@ -2,9 +2,32 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 __logo__ = "🐈"
+
+# Silence noisy Pydantic warnings emitted by some dependencies at import time.
+# These indicate that certain `Field(...)` kwargs are ignored in that context;
+# they're not actionable for nanobot users and clutter CLI output.
+try:
+    from pydantic.warnings import UnsupportedFieldAttributeWarning  # type: ignore
+
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+except Exception:
+    # Fallback: match the message text as printed by Pydantic.
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*The 'repr' attribute with value False was provided to the `Field\(\)` function.*",
+        category=UserWarning,
+        module=r"pydantic\._internal\._generate_schema",
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*The 'frozen' attribute with value True was provided to the `Field\(\)` function.*",
+        category=UserWarning,
+        module=r"pydantic\._internal\._generate_schema",
+    )
 
 
 def _version_from_pyproject() -> str | None:

@@ -98,25 +98,28 @@ class SessionManager:
         # FileLock uses a separate lock file, so it works on Windows and across processes.
         return FileLock(str(self._get_lock_path(path)))
 
-    def get_or_create(self, key: str) -> Session:
+    def get_or_create(self, key: str, *, force_reload: bool = False) -> Session:
         """
         Get an existing session or create a new one.
-        
+
         Args:
             key: Session key (usually channel:chat_id).
-        
+            force_reload: Bypass the in-memory cache and reload from disk.
+                          Useful when another process (e.g. agent loop) may
+                          have written newer data.
+
         Returns:
             The session.
         """
         # Check cache
-        if key in self._cache:
+        if not force_reload and key in self._cache:
             return self._cache[key]
-        
+
         # Try to load from disk
         session = self._load(key)
         if session is None:
             session = Session(key=key)
-        
+
         self._cache[key] = session
         return session
     
