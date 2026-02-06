@@ -10,12 +10,12 @@ from nanobot.config.schema import WebUIConfig
 
 
 @pytest.mark.asyncio
-async def test_webui_channel_receives_inbound_and_sends_outbound() -> None:
+async def test_webui_channel_receives_inbound_and_sends_outbound(tmp_path) -> None:
     import websockets
 
     bus = MessageBus()
     cfg = WebUIConfig(enabled=True, host="127.0.0.1", port=0)
-    ch = WebUIChannel(cfg, bus)
+    ch = WebUIChannel(cfg, bus, workspace=tmp_path)
 
     task = asyncio.create_task(ch.start())
     try:
@@ -29,6 +29,13 @@ async def test_webui_channel_receives_inbound_and_sends_outbound() -> None:
             assert hello["type"] == "session"
             assert hello["chat_id"] == "testchat"
             assert hello["sender_id"] == "testsender"
+            assert hello["session_key"] == "webui:testchat"
+
+            # Then a history payload.
+            history = json.loads(await ws.recv())
+            assert history["type"] == "history"
+            assert history["chat_id"] == "testchat"
+            assert history["session_key"] == "webui:testchat"
 
             await ws.send(json.dumps({"type": "message", "content": "hello"}))
             inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=2.0)
@@ -48,12 +55,12 @@ async def test_webui_channel_receives_inbound_and_sends_outbound() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webui_channel_auth_token_blocks_unauthorized_clients() -> None:
+async def test_webui_channel_auth_token_blocks_unauthorized_clients(tmp_path) -> None:
     import websockets
 
     bus = MessageBus()
     cfg = WebUIConfig(enabled=True, host="127.0.0.1", port=0, auth_token="secret")
-    ch = WebUIChannel(cfg, bus)
+    ch = WebUIChannel(cfg, bus, workspace=tmp_path)
 
     task = asyncio.create_task(ch.start())
     try:
@@ -73,7 +80,9 @@ async def test_webui_channel_auth_token_blocks_unauthorized_clients() -> None:
             msg2 = json.loads(await ws.recv())
             assert msg2["type"] == "session"
             assert msg2["chat_id"] == "x"
+            # history comes next
+            _history = json.loads(await ws.recv())
+            assert _history["type"] == "history"
     finally:
         await ch.stop()
         await asyncio.wait_for(task, timeout=2.0)
-

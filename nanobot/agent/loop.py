@@ -320,7 +320,13 @@ class AgentLoop:
 
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}")
 
-        session_key = session_key_override or msg.session_key
+        meta_override = None
+        try:
+            meta_override = msg.metadata.get("session_key") if isinstance(msg.metadata, dict) else None
+        except Exception:
+            meta_override = None
+
+        session_key = session_key_override or (meta_override if isinstance(meta_override, str) and meta_override else None) or msg.session_key
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
 
@@ -531,13 +537,20 @@ class AgentLoop:
             content=final_content,
         )
 
-    async def process_direct(self, content: str, session_key: str = "cli:direct") -> str:
+    async def process_direct(
+        self,
+        content: str,
+        session_key: str = "cli:direct",
+        *,
+        media: list[str] | None = None,
+    ) -> str:
         """Process a message directly (for CLI usage)."""
         msg = InboundMessage(
             channel="cli",
             sender_id="user",
             chat_id="direct",
             content=content,
+            media=media or [],
         )
 
         response = await self._process_message(msg, session_key_override=session_key)

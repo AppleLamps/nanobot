@@ -40,6 +40,7 @@ class ChannelManager:
                     self.config.channels.telegram,
                     self.bus,
                     groq_api_key=self.config.providers.groq.api_key,
+                    workspace=self.config.workspace_path,
                 )
                 logger.info("Telegram channel enabled")
             except ImportError as e:
@@ -72,7 +73,9 @@ class ChannelManager:
             try:
                 from nanobot.channels.webui import WebUIChannel
                 self.channels["webui"] = WebUIChannel(
-                    self.config.channels.webui, self.bus
+                    self.config.channels.webui,
+                    self.bus,
+                    workspace=self.config.workspace_path,
                 )
                 logger.info("WebUI channel enabled")
             except ImportError as e:

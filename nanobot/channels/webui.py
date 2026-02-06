@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import importlib.resources as pkgres
+import base64
 import json
 import secrets
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -20,12 +22,15 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import WebUIConfig
+from nanobot.session.manager import SessionManager
+from nanobot.utils.helpers import safe_filename
 
 
 @dataclass(frozen=True)
 class _ClientKey:
     chat_id: str
     sender_id: str
+    session_key: str
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -39,9 +44,13 @@ class WebUIChannel(BaseChannel):
     name = "webui"
     max_message_chars = None
 
-    def __init__(self, config: WebUIConfig, bus: MessageBus):
+    def __init__(self, config: WebUIConfig, bus: MessageBus, *, workspace: Path):
         super().__init__(config, bus)
         self.config: WebUIConfig = config
+        self.workspace = Path(workspace)
+        self._sessions = SessionManager(self.workspace)
+        self._uploads_dir = (self.workspace / "uploads")
+        self._uploads_dir.mkdir(parents=True, exist_ok=True)
 
         self._server: Any | None = None
         self._started = asyncio.Event()
@@ -49,6 +58,7 @@ class WebUIChannel(BaseChannel):
         self._clients_lock = asyncio.Lock()
         self._clients: dict[Any, _ClientKey] = {}
         self._by_chat: dict[str, set[Any]] = {}
+        self._uploads: dict[Any, dict[str, dict[str, Any]]] = {}
 
         self._host = (config.host or "127.0.0.1").strip()
         self._port = int(config.port or 0)
@@ -190,6 +200,14 @@ class WebUIChannel(BaseChannel):
     def _new_id(self, prefix: str) -> str:
         return f"{prefix}:{secrets.token_hex(8)}"
 
+    async def _send_history(self, ws: Any, *, chat_id: str, session_key: str) -> None:
+        try:
+            session = self._sessions.get_or_create(session_key)
+            history = session.get_history(max_messages=200)
+        except Exception:
+            history = []
+        await ws.send(json.dumps({"type": "history", "chat_id": chat_id, "session_key": session_key, "messages": history}))
+
     async def start(self) -> None:
         """Start the Web UI server and keep it running."""
         import websockets
@@ -295,14 +313,19 @@ class WebUIChannel(BaseChannel):
 
         chat_id = (qs.get("chat_id") or qs.get("chat") or [""])[0].strip() or self._new_id("c")
         sender_id = (qs.get("sender_id") or [""])[0].strip() or self._new_id("u")
+        session_key = (qs.get("session") or qs.get("session_key") or [""])[0].strip()
+        if not session_key:
+            session_key = f"{self.name}:{chat_id}"
 
-        key = _ClientKey(chat_id=str(chat_id), sender_id=str(sender_id))
+        key = _ClientKey(chat_id=str(chat_id), sender_id=str(sender_id), session_key=str(session_key))
 
         async with self._clients_lock:
             self._clients[ws] = key
             self._by_chat.setdefault(key.chat_id, set()).add(ws)
+            self._uploads.setdefault(ws, {})
 
-        await ws.send(json.dumps({"type": "session", "chat_id": key.chat_id, "sender_id": key.sender_id}))
+        await ws.send(json.dumps({"type": "session", "chat_id": key.chat_id, "sender_id": key.sender_id, "session_key": key.session_key}))
+        await self._send_history(ws, chat_id=key.chat_id, session_key=key.session_key)
         logger.info(f"WebUI client connected chat_id={key.chat_id} sender_id={key.sender_id}")
 
         try:
@@ -325,8 +348,25 @@ class WebUIChannel(BaseChannel):
                 s.discard(ws)
                 if not s:
                     self._by_chat.pop(key.chat_id, None)
+            uploads = self._uploads.pop(ws, None) or {}
+
+        # Best-effort close any in-flight upload handles.
+        for st in uploads.values():
+            try:
+                fh = st.get("fh")
+                if fh:
+                    fh.close()
+            except Exception:
+                pass
 
     async def _handle_ws_message(self, ws: Any, raw: Any) -> None:
+        if not isinstance(raw, (str, bytes, bytearray)):
+            return
+
+        if isinstance(raw, (bytes, bytearray)):
+            # Binary frames not used by the current client; ignore for safety.
+            return
+
         try:
             data = json.loads(raw)
         except Exception:
@@ -346,9 +386,172 @@ class WebUIChannel(BaseChannel):
                 old = self._clients.get(ws)
                 if old is not None:
                     self._by_chat.get(old.chat_id, set()).discard(ws)
-                    self._clients[ws] = _ClientKey(chat_id=new_chat_id, sender_id=old.sender_id)
+                    self._clients[ws] = _ClientKey(chat_id=new_chat_id, sender_id=old.sender_id, session_key=f"{self.name}:{new_chat_id}")
                     self._by_chat.setdefault(new_chat_id, set()).add(ws)
-            await ws.send(json.dumps({"type": "session", "chat_id": new_chat_id}))
+            await ws.send(json.dumps({"type": "session", "chat_id": new_chat_id, "session_key": f"{self.name}:{new_chat_id}"}))
+            await self._send_history(ws, chat_id=new_chat_id, session_key=f"{self.name}:{new_chat_id}")
+            return
+
+        if msg_type in ("list_sessions", "sessions"):
+            items = self._sessions.list_sessions()
+            await ws.send(json.dumps({"type": "sessions", "sessions": items}))
+            return
+
+        if msg_type in ("switch_session", "switch", "load_session"):
+            target = (data.get("session_key") or data.get("session") or "").strip()
+            if not isinstance(target, str) or not target:
+                return
+            async with self._clients_lock:
+                old = self._clients.get(ws)
+                if old is None:
+                    return
+                # Keep chat_id stable by default, but allow clients to opt into chat_id=session_key.
+                new_chat_id = (data.get("chat_id") or "").strip()
+                if not isinstance(new_chat_id, str) or not new_chat_id:
+                    new_chat_id = old.chat_id
+
+                if new_chat_id != old.chat_id:
+                    self._by_chat.get(old.chat_id, set()).discard(ws)
+                    self._by_chat.setdefault(new_chat_id, set()).add(ws)
+
+                self._clients[ws] = _ClientKey(chat_id=new_chat_id, sender_id=old.sender_id, session_key=target)
+
+            await ws.send(json.dumps({"type": "session", "chat_id": new_chat_id, "session_key": target}))
+            await self._send_history(ws, chat_id=new_chat_id, session_key=target)
+            return
+
+        if msg_type in ("upload_init",):
+            client_id = data.get("client_id")
+            filename = data.get("filename")
+            mime = data.get("mime")
+            size = data.get("size")
+            if client_id is not None and not isinstance(client_id, str):
+                client_id = None
+            if not isinstance(filename, str) or not filename:
+                return
+            if not isinstance(mime, str) or not mime:
+                return
+            try:
+                size_i = int(size)
+            except Exception:
+                return
+            if size_i <= 0 or size_i > 15 * 1024 * 1024:
+                await ws.send(json.dumps({"type": "error", "error": "upload too large (max 15MB)"}))
+                return
+            if not (mime.startswith("image/") or mime == "application/pdf"):
+                await ws.send(json.dumps({"type": "error", "error": f"unsupported upload type: {mime}"}))
+                return
+
+            upload_id = self._new_id("up").replace("up:", "")
+            safe_name = safe_filename(filename)
+            ext = Path(safe_name).suffix
+            if not ext:
+                if mime == "application/pdf":
+                    ext = ".pdf"
+                elif mime == "image/png":
+                    ext = ".png"
+                elif mime in ("image/jpeg", "image/jpg"):
+                    ext = ".jpg"
+                elif mime == "image/gif":
+                    ext = ".gif"
+                else:
+                    ext = ""
+
+            dest = self._uploads_dir / f"{upload_id}_{safe_name}"
+            if ext and not str(dest).lower().endswith(ext.lower()):
+                dest = Path(str(dest) + ext)
+
+            try:
+                f = open(dest, "wb")
+            except Exception as e:
+                await ws.send(json.dumps({"type": "error", "error": f"failed to open upload file: {e}"}))
+                return
+
+            async with self._clients_lock:
+                self._uploads.setdefault(ws, {})[upload_id] = {
+                    "path": dest,
+                    "fh": f,
+                    "expected": size_i,
+                    "received": 0,
+                    "mime": mime,
+                    "filename": filename,
+                    "client_id": client_id or "",
+                }
+
+            rel = str(dest.relative_to(self.workspace)).replace("\\", "/")
+            await ws.send(json.dumps({"type": "upload_ready", "client_id": client_id or "", "upload_id": upload_id, "path": rel}))
+            return
+
+        if msg_type in ("upload_chunk",):
+            upload_id = (data.get("upload_id") or "").strip()
+            b64 = data.get("data")
+            if not isinstance(upload_id, str) or not upload_id:
+                return
+            if not isinstance(b64, str) or not b64:
+                return
+
+            async with self._clients_lock:
+                st = self._uploads.get(ws, {}).get(upload_id)
+                if not st:
+                    st = None
+                else:
+                    # Keep a reference to the stored dict so updates persist.
+                    pass
+
+            if st is None:
+                await ws.send(json.dumps({"type": "error", "error": "unknown upload id"}))
+                return
+
+            try:
+                chunk = base64.b64decode(b64.encode("ascii"), validate=False)
+            except Exception:
+                await ws.send(json.dumps({"type": "error", "error": "invalid base64 chunk"}))
+                return
+
+            try:
+                fh = st.get("fh")
+                if fh:
+                    fh.write(chunk)
+                    fh.flush()
+            except Exception as e:
+                await ws.send(json.dumps({"type": "error", "error": f"failed writing upload: {e}"}))
+                return
+
+            async with self._clients_lock:
+                # st is the stored dict; mutate under lock.
+                st["received"] = int(st.get("received") or 0) + len(chunk)
+                received = int(st.get("received") or 0)
+                expected = int(st.get("expected") or 0)
+                path = st.get("path")
+                fh2 = st.get("fh")
+
+            if received > expected:
+                try:
+                    if fh2:
+                        fh2.close()
+                except Exception:
+                    pass
+                try:
+                    if path:
+                        Path(path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+                await ws.send(json.dumps({"type": "error", "error": "upload exceeded expected size"}))
+                return
+
+            if received == expected:
+                try:
+                    if fh2:
+                        fh2.close()
+                except Exception:
+                    pass
+                rel = str(Path(path).relative_to(self.workspace)).replace("\\", "/") if path else ""
+                client_id = ""
+                try:
+                    client_id = str(st.get("client_id") or "")
+                except Exception:
+                    client_id = ""
+                await ws.send(json.dumps({"type": "upload_done", "client_id": client_id, "upload_id": upload_id, "path": rel}))
             return
 
         if msg_type != "message":
@@ -366,9 +569,26 @@ class WebUIChannel(BaseChannel):
         if key is None:
             return
 
+        media = data.get("media")
+        media_paths: list[str] = []
+        if isinstance(media, list):
+            for item in media:
+                if not isinstance(item, str) or not item:
+                    continue
+                # Only allow files within the workspace to be attached.
+                try:
+                    p = (self.workspace / item).resolve() if not Path(item).is_absolute() else Path(item).resolve()
+                    if self.workspace.resolve() not in p.parents and p != self.workspace.resolve():
+                        continue
+                    if p.is_file():
+                        media_paths.append(str(p))
+                except Exception:
+                    continue
+
         await self._handle_message(
             sender_id=key.sender_id,
             chat_id=key.chat_id,
             content=content,
-            metadata={"client": "webui"},
+            media=media_paths,
+            metadata={"client": "webui", "session_key": key.session_key},
         )

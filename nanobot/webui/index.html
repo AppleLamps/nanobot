@@ -41,8 +41,8 @@
                   <span id="dot" class="dot" aria-hidden="true"></span>
                   <span id="status">connecting</span>
                 </span>
-                <span class="pill" title="Session">
-                  session: <span id="chatid">…</span>
+                <span class="pill" title="Conversation">
+                  convo: <span id="sessionkey">…</span>
                 </span>
               </div>
             </div>
@@ -51,6 +51,9 @@
           <div class="actions">
             <button class="btn" id="copy-link" title="Copy this session link">
               Copy Link
+            </button>
+            <button class="btn" id="sessions" title="Browse saved conversations">
+              Sessions
             </button>
             <button class="btn" id="clear" title="Clear local history">Clear</button>
             <button class="btn primary" id="new-chat" title="Start a new session">
@@ -68,6 +71,8 @@
 
           <footer class="composer">
             <div class="tray">
+              <input id="file" type="file" accept="image/*,application/pdf" multiple hidden />
+              <button class="btn" id="attach" title="Attach image or PDF">Attach</button>
               <textarea
                 id="input"
                 placeholder="Ask nanobot. Shift+Enter for a newline."
@@ -75,6 +80,7 @@
               ></textarea>
               <button class="btn primary" id="send">Send</button>
             </div>
+            <div class="attachments" id="attachments" aria-label="attachments"></div>
             <div class="hint">
               <div>
                 <span class="kbd">Enter</span> send,
@@ -92,4 +98,3 @@
     <script src="/app.js"></script>
   </body>
 </html>
-

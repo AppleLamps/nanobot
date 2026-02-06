@@ -4,6 +4,7 @@ import asyncio
 import re
 
 from loguru import logger
+from pathlib import Path
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
@@ -86,10 +87,18 @@ class TelegramChannel(BaseChannel):
     name = "telegram"
     max_message_chars = 3500
     
-    def __init__(self, config: TelegramConfig, bus: MessageBus, groq_api_key: str = ""):
+    def __init__(
+        self,
+        config: TelegramConfig,
+        bus: MessageBus,
+        groq_api_key: str = "",
+        *,
+        workspace: Path | None = None,
+    ):
         super().__init__(config, bus)
         self.config: TelegramConfig = config
         self.groq_api_key = groq_api_key
+        self.workspace = workspace
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
     
@@ -254,7 +263,10 @@ class TelegramChannel(BaseChannel):
                 
                 # Save to workspace/media/
                 from pathlib import Path
-                media_dir = Path.home() / ".nanobot" / "media"
+                if self.workspace is not None:
+                    media_dir = Path(self.workspace) / "media"
+                else:
+                    media_dir = Path.home() / ".nanobot" / "media"
                 media_dir.mkdir(parents=True, exist_ok=True)
                 
                 file_path = media_dir / f"{media_file.file_id[:16]}{ext}"
@@ -305,6 +317,7 @@ class TelegramChannel(BaseChannel):
             ext_map = {
                 "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
                 "audio/ogg": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a",
+                "application/pdf": ".pdf",
             }
             if mime_type in ext_map:
                 return ext_map[mime_type]

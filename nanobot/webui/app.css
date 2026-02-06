@@ -388,6 +388,48 @@ button {
   align-items: flex-end;
 }
 
+.attachments {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(251, 247, 241, 0.06);
+  border: 1px solid rgba(251, 247, 241, 0.14);
+  color: rgba(251, 247, 241, 0.82);
+  font-size: 12px;
+  max-width: 100%;
+}
+
+.chip .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+
+.chip .x {
+  border: 0;
+  background: rgba(251, 247, 241, 0.08);
+  color: rgba(251, 247, 241, 0.82);
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  line-height: 22px;
+  padding: 0;
+}
+
+.chip .x:hover {
+  background: rgba(251, 247, 241, 0.12);
+}
+
 textarea {
   flex: 1;
   resize: none;
@@ -501,4 +543,3 @@ textarea:focus {
     right: 14px;
   }
 }
-

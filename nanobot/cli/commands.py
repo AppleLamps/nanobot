@@ -554,6 +554,11 @@ def gateway(
 def agent(
     message: str = typer.Option(None, "--message", "-m", help="Message to send to the agent"),
     session_id: str = typer.Option("cli:default", "--session", "-s", help="Session ID"),
+    media: list[str] = typer.Option(
+        [],
+        "--media",
+        help="Attach local image/PDF paths (repeatable). Example: --media ./diagram.png --media ./doc.pdf",
+    ),
 ):
     """Interact with the agent directly."""
     from nanobot.config.loader import load_config
@@ -592,7 +597,7 @@ def agent(
     if message:
         # Single message mode
         async def run_once():
-            response = await agent_loop.process_direct(message, session_id)
+            response = await agent_loop.process_direct(message, session_id, media=media or None)
             console.print(f"\n{__logo__} {response}")
         
         asyncio.run(run_once())

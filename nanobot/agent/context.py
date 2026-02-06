@@ -395,22 +395,51 @@ Skills with available="false" need dependencies installed first - you can try in
         return messages
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
-        """Build user message content with optional base64-encoded images."""
+        """
+        Build user message content with optional attachments.
+
+        - Images are attached as data URLs (OpenAI-style image_url parts).
+        - PDFs are attached as OpenRouter-style file parts (data:application/pdf;base64,...).
+        """
         if not media:
             return text
-        
-        images = []
+
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
+
         for path in media:
             p = Path(path)
-            mime, _ = mimetypes.guess_type(path)
-            if not p.is_file() or not mime or not mime.startswith("image/"):
+            try:
+                mime, _ = mimetypes.guess_type(str(p))
+            except Exception:
+                mime = None
+
+            if not p.is_file() or not mime:
                 continue
-            b64 = base64.b64encode(p.read_bytes()).decode()
-            images.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
-        
-        if not images:
+
+            if mime.startswith("image/"):
+                b64 = base64.b64encode(p.read_bytes()).decode()
+                parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+                continue
+
+            if mime == "application/pdf":
+                b64 = base64.b64encode(p.read_bytes()).decode()
+                data_url = f"data:application/pdf;base64,{b64}"
+                # OpenRouter guide uses a file part for PDFs. Keep filename for UX.
+                parts.append(
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": p.name,
+                            "file_data": data_url,
+                        },
+                    }
+                )
+                continue
+
+        # If we didn't attach anything, fall back to plain text for maximum compatibility.
+        if len(parts) == 1:
             return text
-        return images + [{"type": "text", "text": text}]
+        return parts
     
     def add_tool_result(
         self,
