@@ -99,6 +99,21 @@ class ToolRegistry:
         if not k:
             return None
         return f"{tool.name}:{k}"
+
+    def _is_retryable_error(self, result: str) -> bool:
+        s = result.strip().lower()
+        if not (s.startswith("error:") or s.startswith("warning:")):
+            return False
+        no_retry = (
+            "invalid parameters",
+            "not permitted",
+            "not found",
+            "blocked by safety guard",
+            "missing required",
+            "should be",
+            "url validation failed",
+        )
+        return not any(marker in s for marker in no_retry)
     
     async def execute(self, name: str, params: dict[str, Any]) -> str:
         """
@@ -144,6 +159,14 @@ class ToolRegistry:
                 result = await tool.execute(**params)
             except Exception as e:
                 result = f"Error executing {name}: {str(e)}"
+
+            retries = int(getattr(tool, "max_retries", 0) or 0)
+            while retries > 0 and self._is_retryable_error(result):
+                retries -= 1
+                try:
+                    result = await tool.execute(**params)
+                except Exception as e:
+                    result = f"Error executing {name}: {str(e)}"
 
             if cache_key:
                 try:

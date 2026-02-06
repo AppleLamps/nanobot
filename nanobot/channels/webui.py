@@ -12,6 +12,7 @@ import json
 import secrets
 import time
 from dataclasses import dataclass
+from collections import deque
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -64,10 +65,14 @@ class WebUIChannel(BaseChannel):
     name = "webui"
     max_message_chars = None
 
+    _log_sink_id: int | None = None
+    _log_buffer: "deque[str]" = deque(maxlen=2000)
+
     def __init__(self, config: WebUIConfig, bus: MessageBus, *, workspace: Path):
         super().__init__(config, bus)
         self.config: WebUIConfig = config
         self.workspace = Path(workspace)
+        self._ensure_log_sink()
         self._sessions = SessionManager(self.workspace)
         self._uploads_dir = (self.workspace / "uploads")
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -110,6 +115,35 @@ class WebUIChannel(BaseChannel):
             return p.read_bytes()
         except Exception:
             return b""
+
+    def _ensure_log_sink(self) -> None:
+        if WebUIChannel._log_sink_id is not None:
+            return
+
+        def _sink(message: Any) -> None:
+            try:
+                r = message.record
+                ts = r.get("time").strftime("%Y-%m-%d %H:%M:%S")
+                level = r.get("level").name
+                name = r.get("name")
+                msg = r.get("message")
+                line = f"{ts} | {level:<7} | {name} | {msg}"
+            except Exception:
+                line = str(message)
+            WebUIChannel._log_buffer.append(line)
+
+        WebUIChannel._log_sink_id = logger.add(_sink, level="DEBUG")
+
+    def _get_logs_text(self) -> str:
+        if not WebUIChannel._log_buffer:
+            return "(log buffer empty)\n"
+        text = "\n".join(WebUIChannel._log_buffer) + "\n"
+        # Cap output to ~200k to keep responses lightweight.
+        max_len = 200_000
+        if len(text) > max_len:
+            text = text[-max_len:]
+            text = "[truncated]\n" + text
+        return text
 
     def _mime_for(self, path: str) -> str:
         if path.endswith(".html"):
@@ -199,6 +233,17 @@ class WebUIChannel(BaseChannel):
                 body,
             )
 
+        if parsed.path == "/logs":
+            text = self._get_logs_text()
+            body = text.encode("utf-8", errors="replace")
+            headers = [
+                ("Content-Type", "text/plain; charset=utf-8"),
+                ("Content-Length", str(len(body))),
+                ("Cache-Control", "no-store"),
+                ("Content-Disposition", "attachment; filename=nanobot.log"),
+            ]
+            return _reply(200, headers, body)
+
         route = parsed.path
         if route in ("", "/"):
             route = "/index.html"
@@ -249,14 +294,27 @@ class WebUIChannel(BaseChannel):
     async def _send_settings(self, ws: Any, *, session_key: str) -> None:
         """Send per-session settings (currently just model) to a client."""
         model = ""
+        verbosity = ""
         try:
             session = self._sessions.get_or_create(session_key)
             m = session.metadata.get("model")
             if isinstance(m, str):
                 model = m.strip()
+            v = session.metadata.get("verbosity")
+            if isinstance(v, str):
+                verbosity = v.strip()
         except Exception:
             model = ""
-        await ws.send(json.dumps({"type": "settings", "session_key": session_key, "model": model}))
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "settings",
+                    "session_key": session_key,
+                    "model": model,
+                    "verbosity": verbosity,
+                }
+            )
+        )
 
     async def _broadcast_settings(self, *, session_key: str) -> None:
         """Broadcast settings to all connected clients currently bound to session_key."""
@@ -361,8 +419,15 @@ class WebUIChannel(BaseChannel):
         if msg.channel != self.name:
             return
 
+        msg_type = "assistant"
+        try:
+            if isinstance(msg.metadata, dict) and msg.metadata.get("type") == "status":
+                msg_type = "status"
+        except Exception:
+            msg_type = "assistant"
+
         payload = json.dumps(
-            {"type": "assistant", "chat_id": str(msg.chat_id), "content": msg.content or "", "ts": time.time()}
+            {"type": msg_type, "chat_id": str(msg.chat_id), "content": msg.content or "", "ts": time.time()}
         )
 
         async with self._clients_lock:
@@ -535,6 +600,36 @@ class WebUIChannel(BaseChannel):
                 await self._sessions.save_async(session)
             except Exception as e:
                 await ws.send(json.dumps({"type": "error", "error": f"failed to save model: {e}"}))
+                return
+
+            await self._broadcast_settings(session_key=key.session_key)
+            return
+
+        if msg_type in ("set_verbosity", "verbosity"):
+            verbosity = data.get("verbosity")
+            if verbosity is None:
+                verbosity = ""
+            if not isinstance(verbosity, str):
+                return
+            verbosity = verbosity.strip().lower()
+            if verbosity and verbosity not in ("low", "normal", "high"):
+                await ws.send(json.dumps({"type": "error", "error": "invalid verbosity"}))
+                return
+
+            async with self._clients_lock:
+                key = self._clients.get(ws)
+            if key is None:
+                return
+
+            try:
+                session = self._sessions.get_or_create(key.session_key)
+                if verbosity:
+                    session.metadata["verbosity"] = verbosity
+                else:
+                    session.metadata.pop("verbosity", None)
+                await self._sessions.save_async(session)
+            except Exception as e:
+                await ws.send(json.dumps({"type": "error", "error": f"failed to save verbosity: {e}"}))
                 return
 
             await self._broadcast_settings(session_key=key.session_key)

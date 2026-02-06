@@ -5,6 +5,7 @@ import {
   setStatus,
   toastMsg,
   addRow,
+  renderMarkdownish,
   renderHistory,
   updateEmpty,
 } from "./render.js";
@@ -50,7 +51,7 @@ export function connect() {
 
   try {
     if (state.ws) state.ws.close();
-  } catch (_) {}
+  } catch (_) { }
 
   state.ws = new WebSocket(wsUrl());
 
@@ -64,7 +65,7 @@ export function connect() {
           sender_id: state.senderId,
         })
       );
-    } catch (_) {}
+    } catch (_) { }
   });
 
   state.ws.addEventListener("message", (ev) => {
@@ -114,8 +115,15 @@ export function connect() {
     if (data.type === "settings") {
       if (data.session_key && String(data.session_key) !== state.sessionKey) return;
       state.currentModel = String(data.model || "").trim();
+      const v = String(data.verbosity || "").trim();
+      if (v) state.verbosity = v;
+      if (state.currentModel) {
+        state.modelDefault = state.currentModel;
+        persist("modelDefault", state.modelDefault);
+      }
       if (dom.modelPill) dom.modelPill.textContent = state.currentModel || "default";
-      if (dom.modelInput) dom.modelInput.value = state.currentModel || "";
+      if (dom.modelInput) dom.modelInput.value = state.currentModel || state.modelDefault || "";
+      if (dom.verbositySelect) dom.verbositySelect.value = state.verbosity || "normal";
 
       if (
         state.pendingNewChatDefaultModel &&
@@ -125,9 +133,34 @@ export function connect() {
       ) {
         try {
           state.ws.send(JSON.stringify({ type: "set_model", model: state.modelDefault }));
-        } catch (_) {}
+        } catch (_) { }
+      }
+      if (
+        state.pendingNewChatDefaultVerbosity &&
+        state.lastHistoryEmpty &&
+        !v &&
+        state.verbosity
+      ) {
+        try {
+          state.ws.send(JSON.stringify({ type: "set_verbosity", verbosity: state.verbosity }));
+        } catch (_) { }
       }
       state.pendingNewChatDefaultModel = false;
+      state.pendingNewChatDefaultVerbosity = false;
+      return;
+    }
+
+    if (data.type === "status") {
+      const c = String(data.content || "").trim();
+      if (state.thinkingRow && c) {
+        const node = state.thinkingRow.querySelector(".content");
+        if (node) {
+          node.innerHTML = "";
+          node.appendChild(renderMarkdownish(c));
+        }
+      } else if (dom.latency && c) {
+        dom.latency.textContent = c;
+      }
       return;
     }
 

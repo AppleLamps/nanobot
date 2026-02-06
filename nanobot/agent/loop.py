@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -253,6 +254,71 @@ class AgentLoop:
 
         session.metadata["token_tune_streak"] = streak
 
+    async def _emit_status(self, channel: str, chat_id: str, content: str) -> None:
+        if not content:
+            return
+        try:
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=content,
+                    metadata={"type": "status"},
+                )
+            )
+        except Exception:
+            pass
+
+    def _format_tool_status(self, tool_name: str, args: dict[str, Any]) -> str:
+        if tool_name == "web_fetch":
+            url = str(args.get("url") or "").strip()
+            host = ""
+            try:
+                from urllib.parse import urlparse
+
+                host = urlparse(url).netloc
+            except Exception:
+                host = ""
+            return f"Fetching {host or 'a web page'}..."
+        if tool_name == "web_search":
+            q = str(args.get("query") or "").strip()
+            return f"Searching the web{': ' + q if q else '...'}"
+        if tool_name == "read_file":
+            p = str(args.get("path") or args.get("filePath") or "").strip()
+            return f"Reading {p or 'a file'}..."
+        if tool_name == "write_file":
+            p = str(args.get("path") or args.get("filePath") or "").strip()
+            return f"Writing {p or 'a file'}..."
+        if tool_name == "edit_file":
+            p = str(args.get("path") or args.get("filePath") or "").strip()
+            return f"Editing {p or 'a file'}..."
+        if tool_name == "list_dir":
+            p = str(args.get("path") or "").strip()
+            return f"Listing {p or 'a folder'}..."
+        if tool_name == "exec":
+            return "Running a command..."
+        if tool_name == "message":
+            return "Sending a message..."
+        if tool_name == "spawn":
+            return "Starting a background task..."
+        return "Working on it..."
+
+    async def _maybe_emit_tool_status(
+        self,
+        channel: str,
+        chat_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        last_status_ts: float,
+        min_interval_s: float = 2.0,
+    ) -> float:
+        now = time.monotonic()
+        if now - last_status_ts < min_interval_s:
+            return last_status_ts
+        msg = self._format_tool_status(tool_name, args)
+        await self._emit_status(channel, chat_id, msg)
+        return now
+
     async def run(self) -> None:
         """Run the agent loop, processing messages from the bus."""
         self._running = True
@@ -321,11 +387,15 @@ class AgentLoop:
         tools: ToolRegistry,
         tool_error_backoff_message: str,
         no_response_message: str,
+        channel: str,
+        chat_id: str,
+        verbosity: str,
         model: str | None = None,
     ) -> str:
         iteration = 0
         final_content: str | None = None
         tool_error_streak = 0
+        last_status_ts = 0.0
 
         chosen_model = (model or "").strip() or self.model
 
@@ -365,6 +435,21 @@ class AgentLoop:
                     logger.debug(
                         f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
                     )
+                    if channel and chat_id:
+                        v = (verbosity or "normal").strip().lower()
+                        min_interval = 2.0
+                        if v == "low":
+                            min_interval = 5.0
+                        elif v == "high":
+                            min_interval = 0.8
+                        last_status_ts = await self._maybe_emit_tool_status(
+                            channel,
+                            chat_id,
+                            tool_call.name,
+                            tool_call.arguments,
+                            last_status_ts,
+                            min_interval_s=min_interval,
+                        )
                 results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
                 for tool_call, result in zip(response.tool_calls, results):
                     messages = self.context.add_tool_result(
@@ -467,6 +552,9 @@ class AgentLoop:
                 "Please rephrase or provide more specific inputs."
             ),
             no_response_message="I've completed processing but have no response to give.",
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            verbosity=str(session.metadata.get("verbosity") or "normal"),
             model=chosen_model,
         )
 
@@ -526,6 +614,9 @@ class AgentLoop:
                 "Please rephrase or provide more specific inputs."
             ),
             no_response_message="Background task completed.",
+            channel=origin_channel,
+            chat_id=origin_chat_id,
+            verbosity=str(session.metadata.get("verbosity") or "normal"),
             model=chosen_model,
         )
 

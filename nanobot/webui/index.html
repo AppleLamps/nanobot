@@ -46,17 +46,18 @@
         </div>
 
         <div class="actions">
-          <button class="topbtn" id="copy-link" title="Copy this session link">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
-              <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-            </svg>
-          </button>
           <button class="topbtn" id="sessions" title="Browse saved conversations">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
               stroke-linecap="round" stroke-linejoin="round">
               <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+            </svg>
+          </button>
+          <button class="topbtn" id="settings" title="Settings">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c0 .66.39 1.26 1 1.51.32.13.67.2 1.02.2H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
           </button>
           <button class="topbtn" id="clear" title="Clear local history">
@@ -148,6 +149,33 @@
               Pick a conversation. This list is pulled from your local session store.
             </div>
             <div class="sessionlist" id="sessions-list"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal" id="settings-modal" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-label="Settings">
+          <div class="modal-head">
+            <div class="modal-title">Settings</div>
+            <button class="iconbtn" id="settings-close" type="button">Close</button>
+          </div>
+          <div class="modal-body">
+            <div class="modal-sub">
+              Adjust how chat updates are reported while the agent works.
+            </div>
+            <div class="settings-row">
+              <label class="settings-label" for="verbosity">Verbosity</label>
+              <select id="verbosity" class="settings-select">
+                <option value="low">Low</option>
+                <option value="normal">Normal</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+            <div class="settings-help">Higher verbosity shows more live updates.</div>
+            <div class="settings-row">
+              <div class="settings-label">Logs</div>
+              <button class="btn" id="download-logs" type="button">Download logs</button>
+            </div>
           </div>
         </div>
       </div>

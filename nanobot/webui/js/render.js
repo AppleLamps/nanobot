@@ -59,7 +59,7 @@ function safeLink(url) {
   try {
     const u = new URL(url, location.href);
     if (u.protocol === "http:" || u.protocol === "https:") return u.href;
-  } catch (_) {}
+  } catch (_) { }
   return null;
 }
 
@@ -89,7 +89,7 @@ export function renderMarkdownish(text) {
     root.appendChild(span);
   }
 
-  for (let m; (m = re.exec(t)); ) {
+  for (let m; (m = re.exec(t));) {
     if (m.index > last) addTextBlock(t.slice(last, m.index));
     const pre = document.createElement("pre");
     const code = document.createElement("code");
@@ -150,6 +150,7 @@ export function addRow(role, text, opts) {
 
 export function renderHistory(msgs) {
   state.serverHistory = Array.isArray(msgs) ? msgs : [];
+  state.lastHistoryEmpty = state.serverHistory.length === 0;
   clearRows();
   for (const m of state.serverHistory) addRow(m.role, m.content);
   updateEmpty();

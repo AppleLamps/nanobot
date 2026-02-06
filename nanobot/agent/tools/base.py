@@ -23,6 +23,9 @@ class Tool(ABC):
     # Optional cache TTL (seconds). None means "no TTL" (eviction only by LRU size).
     cache_ttl_s: float | None = None
 
+    # Optional retry count for transient failures.
+    max_retries: int = 0
+
     _TYPE_MAP = {
         "string": str,
         "integer": int,

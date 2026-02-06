@@ -26,10 +26,14 @@ export const dom = {
   sessionsModal: $("sessions-modal"),
   sessionsClose: $("sessions-close"),
   sessionsList: $("sessions-list"),
+  settingsModal: $("settings-modal"),
+  settingsClose: $("settings-close"),
+  verbositySelect: $("verbosity"),
+  downloadLogsBtn: $("download-logs"),
   clearBtn: $("clear"),
   newChatBtn: $("new-chat"),
   sessionsBtn: $("sessions"),
-  copyBtn: $("copy-link"),
+  settingsBtn: $("settings"),
 };
 
 /* Model presets for datalist */
@@ -64,6 +68,8 @@ export const state = {
   sessionKey: "",
   currentModel: "",
   modelDefault: "",
+  verbosity: "normal",
+  pendingNewChatDefaultVerbosity: false,
 };
 
 /* Utilities */
@@ -97,6 +103,7 @@ if (!state.sessionKey) state.sessionKey = "webui:" + state.chatId;
 storage.setItem("nanobot.webui.sessionKey", state.sessionKey);
 
 state.modelDefault = (qs.get("model") || storage.getItem("nanobot.webui.modelDefault") || "").trim();
+state.verbosity = (qs.get("verbosity") || storage.getItem("nanobot.webui.verbosity") || "normal").trim();
 
 /* Persist helpers */
 export function persist(key, value) {

@@ -18,6 +18,9 @@ class ExecTool(Tool):
     and should not be treated as a security boundary. For untrusted deployments, disable
     this tool or run nanobot inside an OS-level sandbox (e.g. container/VM/jail).
     """
+
+    # Retry once on transient failures.
+    max_retries = 1
     
     def __init__(
         self,
@@ -214,8 +217,11 @@ class ExecTool(Tool):
 
             cwd_path = Path(cwd).resolve()
 
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd)
-            posix_paths = re.findall(r"/[^\s\"']+", cmd)
+            # Ignore URL tokens when scanning for absolute paths (e.g., curl https://...).
+            cmd_no_urls = re.sub(r"https?://[^\s\"']+", "", cmd)
+
+            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd_no_urls)
+            posix_paths = re.findall(r"/[^\s\"']+", cmd_no_urls)
 
             for raw in win_paths + posix_paths:
                 try:

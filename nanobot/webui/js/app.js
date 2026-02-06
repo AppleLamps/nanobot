@@ -68,8 +68,20 @@ async function send() {
       renderAttachments();
     }
 
+    const inputModel = String((dom.modelInput && dom.modelInput.value) || "").trim();
+    const effectiveModel = inputModel || state.currentModel;
+    if (effectiveModel) {
+      state.modelDefault = effectiveModel;
+      persist("modelDefault", state.modelDefault);
+      if (state.currentModel !== effectiveModel) {
+        try {
+          state.ws.send(JSON.stringify({ type: "set_model", model: effectiveModel }));
+        } catch (_) { }
+      }
+    }
+
     const payload = { type: "message", content: text, media };
-    if (state.currentModel) payload.model = state.currentModel;
+    if (effectiveModel) payload.model = effectiveModel;
     state.ws.send(JSON.stringify(payload));
   } catch (e) {
     state.inflight = false;
@@ -117,6 +129,67 @@ function closeSessionsModal() {
   if (!dom.sessionsModal) return;
   dom.sessionsModal.classList.remove("show");
   dom.sessionsModal.setAttribute("aria-hidden", "true");
+}
+
+/* --- Settings modal --- */
+
+function openSettingsModal() {
+  if (!dom.settingsModal) return;
+  dom.settingsModal.classList.add("show");
+  dom.settingsModal.setAttribute("aria-hidden", "false");
+}
+
+function closeSettingsModal() {
+  if (!dom.settingsModal) return;
+  dom.settingsModal.classList.remove("show");
+  dom.settingsModal.setAttribute("aria-hidden", "true");
+}
+
+function applyVerbosity() {
+  if (!dom.verbositySelect) return;
+  const v = String(dom.verbositySelect.value || "normal").trim();
+  state.verbosity = v || "normal";
+  persist("verbosity", state.verbosity);
+
+  if (!state.ws || state.ws.readyState !== 1) {
+    toastMsg("Not connected yet.");
+    return;
+  }
+
+  try {
+    state.ws.send(JSON.stringify({ type: "set_verbosity", verbosity: state.verbosity }));
+    toastMsg("Verbosity set.");
+  } catch (_) {
+    toastMsg("Failed to set verbosity.");
+  }
+}
+
+async function downloadLogs() {
+  const qs = new URLSearchParams();
+  if (state.token) qs.set("token", state.token);
+  const url = "/logs" + (qs.toString() ? `?${qs.toString()}` : "");
+
+  try {
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) {
+      const msg = await resp.text().catch(() => "");
+      const detail = msg.trim() ? ` ${msg.trim()}` : "";
+      throw new Error(`HTTP ${resp.status}${detail}`);
+    }
+    const blob = await resp.blob();
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-");
+    a.href = URL.createObjectURL(blob);
+    a.download = `nanobot-log-${ts}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    toastMsg("Logs downloaded.");
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    toastMsg("Failed to download logs." + (msg ? " " + msg : ""));
+  }
 }
 
 /* --- Wire up events --- */
@@ -172,6 +245,7 @@ if (dom.newChatBtn)
     if (state.inflight) return;
     if (state.ws && state.ws.readyState === 1) {
       state.pendingNewChatDefaultModel = true;
+      state.pendingNewChatDefaultVerbosity = true;
       renderHistory([]);
       state.ws.send(JSON.stringify({ type: "new_chat" }));
       toastMsg("New session.");
@@ -184,6 +258,7 @@ if (dom.newChatBtn)
     persist("sessionKey", state.sessionKey);
     if (dom.sessionKey) dom.sessionKey.textContent = state.sessionKey;
     state.pendingNewChatDefaultModel = true;
+    state.pendingNewChatDefaultVerbosity = true;
     renderHistory([]);
     connect();
     toastMsg("New session.");
@@ -224,25 +299,23 @@ if (dom.sessionsModal)
     if (e.target === dom.sessionsModal) closeSessionsModal();
   });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeSessionsModal();
+  if (e.key === "Escape") {
+    closeSessionsModal();
+    closeSettingsModal();
+  }
 });
 
-/* Copy link */
-if (dom.copyBtn)
-  dom.copyBtn.addEventListener("click", async () => {
-    const u = new URL(location.href);
-    u.searchParams.set("chat", state.chatId);
-    u.searchParams.set("session", state.sessionKey);
-    if (state.token) u.searchParams.set("token", state.token);
-    if (state.currentModel) u.searchParams.set("model", state.currentModel);
-
-    try {
-      await navigator.clipboard.writeText(u.toString());
-      toastMsg("Link copied.");
-    } catch (_) {
-      toastMsg("Clipboard blocked.");
-    }
+/* Settings */
+if (dom.settingsBtn) dom.settingsBtn.addEventListener("click", openSettingsModal);
+if (dom.settingsClose) dom.settingsClose.addEventListener("click", closeSettingsModal);
+if (dom.settingsModal)
+  dom.settingsModal.addEventListener("click", (e) => {
+    if (e.target === dom.settingsModal) closeSettingsModal();
   });
+if (dom.verbositySelect)
+  dom.verbositySelect.addEventListener("change", applyVerbosity);
+if (dom.downloadLogsBtn)
+  dom.downloadLogsBtn.addEventListener("click", downloadLogs);
 
 /* Model */
 if (dom.applyModelBtn) dom.applyModelBtn.addEventListener("click", applyModel);
@@ -270,6 +343,7 @@ for (const b of Array.from(document.querySelectorAll(".chipbtn"))) {
 if (dom.sessionKey) dom.sessionKey.textContent = state.sessionKey;
 if (dom.modelPill) dom.modelPill.textContent = "default";
 if (dom.modelInput) dom.modelInput.value = "";
+if (dom.verbositySelect) dom.verbositySelect.value = state.verbosity || "normal";
 
 fillModelDatalist();
 autogrow();

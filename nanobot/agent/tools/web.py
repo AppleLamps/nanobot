@@ -100,6 +100,7 @@ class WebFetchTool(Tool):
     parallel_safe = True
     cacheable = True
     cache_ttl_s = 600.0
+    max_retries = 1
     description = "Fetch URL and extract readable content (HTML → markdown/text)."
     parameters = {
         "type": "object",
