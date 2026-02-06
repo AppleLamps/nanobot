@@ -1,6 +1,5 @@
 """LiteLLM provider implementation for multi-provider support."""
 
-import os
 from typing import Any
 
 import litellm
@@ -16,6 +15,16 @@ class LiteLLMProvider(LLMProvider):
     Supports OpenRouter, Anthropic, OpenAI, Gemini, and many other providers through
     a unified interface.
     """
+
+    _NON_OPENAI_COMPATIBLE_PREFIXES = (
+        "anthropic/",
+        "gemini/",
+        "zhipu/",
+        "zai/",
+        "groq/",
+        "bedrock/",
+        "openrouter/",
+    )
     
     def __init__(
         self, 
@@ -29,36 +38,28 @@ class LiteLLMProvider(LLMProvider):
         # Detect OpenRouter by api_key prefix or explicit api_base
         self.is_openrouter = (
             (api_key and api_key.startswith("sk-or-")) or
-            (api_base and "openrouter" in api_base)
+            (api_base and "openrouter" in api_base) or
+            default_model.startswith("openrouter/")
         )
         
-        # Track if using custom endpoint (vLLM, etc.)
-        self.is_vllm = bool(api_base) and not self.is_openrouter
-        
-        # Configure LiteLLM based on provider
-        if api_key:
-            if self.is_openrouter:
-                # OpenRouter mode - set key
-                os.environ["OPENROUTER_API_KEY"] = api_key
-            elif self.is_vllm:
-                # vLLM/custom endpoint - uses OpenAI-compatible API
-                os.environ["OPENAI_API_KEY"] = api_key
-            elif "anthropic" in default_model:
-                os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
-            elif "openai" in default_model or "gpt" in default_model:
-                os.environ.setdefault("OPENAI_API_KEY", api_key)
-            elif "gemini" in default_model.lower():
-                os.environ.setdefault("GEMINI_API_KEY", api_key)
-            elif "zhipu" in default_model or "glm" in default_model or "zai" in default_model:
-                os.environ.setdefault("ZHIPUAI_API_KEY", api_key)
-            elif "groq" in default_model:
-                os.environ.setdefault("GROQ_API_KEY", api_key)
-        
-        if api_base:
-            litellm.api_base = api_base
+        # Track if using a custom OpenAI-compatible endpoint (vLLM, etc.).
+        # Do not infer "vLLM" from api_base alone, because other providers can also have api_base.
+        self.is_vllm = bool(api_base) and (not self.is_openrouter) and self._is_openai_compatible_model(default_model)
         
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
+
+    def _is_openai_compatible_model(self, model: str) -> bool:
+        model = (model or "").strip()
+        if model.startswith("hosted_vllm/"):
+            return True
+        lower = model.lower()
+        if any(lower.startswith(p) for p in self._NON_OPENAI_COMPATIBLE_PREFIXES):
+            return False
+        # Models without a provider prefix are treated as OpenAI-compatible for custom endpoints.
+        if "/" not in lower:
+            return True
+        return lower.startswith("openai/")
     
     async def chat(
         self,
@@ -98,7 +99,7 @@ class LiteLLMProvider(LLMProvider):
         
         # For vLLM, use hosted_vllm/ prefix per LiteLLM docs
         # Convert openai/ prefix to hosted_vllm/ if user specified it
-        if self.is_vllm:
+        if self.is_vllm and not model.startswith("hosted_vllm/"):
             model = f"hosted_vllm/{model}"
         
         # For Gemini, ensure gemini/ prefix if not already present
@@ -112,7 +113,12 @@ class LiteLLMProvider(LLMProvider):
             "temperature": temperature,
         }
         
-        # Pass api_base directly for custom endpoints (vLLM, etc.)
+        # Pass credentials per-request to avoid global os.environ mutation and reduce secret leakage
+        # (e.g., to subprocesses spawned by tools).
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+
+        # Pass api_base directly for custom endpoints or provider overrides.
         if self.api_base:
             kwargs["api_base"] = self.api_base
         

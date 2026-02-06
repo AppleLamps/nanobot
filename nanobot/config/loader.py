@@ -1,6 +1,7 @@
 """Configuration loading utilities."""
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -81,12 +82,50 @@ def convert_to_camel(data: Any) -> Any:
 
 def camel_to_snake(name: str) -> str:
     """Convert camelCase to snake_case."""
-    result = []
-    for i, char in enumerate(name):
-        if char.isupper() and i > 0:
-            result.append("_")
-        result.append(char.lower())
-    return "".join(result)
+    # Handle common camelCase/PascalCase and consecutive uppercase runs (acronyms).
+    #
+    # Examples:
+    # - bridgeUrl -> bridge_url
+    # - apiKey -> api_key
+    # - allowIPv6 -> allow_ipv6
+    if not name:
+        return ""
+
+    # Fast path for already-snake-ish values.
+    if "_" in name and name.lower() == name:
+        return name
+
+    out: list[str] = []
+    n = len(name)
+
+    def _lower_run_len(start: int) -> int:
+        j = start
+        while j < n and name[j].islower():
+            j += 1
+        return j - start
+
+    for i, ch in enumerate(name):
+        if not ch.isupper():
+            out.append(ch)
+            continue
+
+        if i > 0:
+            prev = name[i - 1]
+            nxt = name[i + 1] if i + 1 < n else ""
+
+            if prev.islower() or prev.isdigit():
+                out.append("_")
+            elif prev.isupper() and nxt and nxt.islower():
+                # Only split acronym -> word transitions when the following lowercase
+                # run is "word-like" (length > 1). This keeps cases like "IPv6"
+                # together, while still splitting "APIKey" -> "api_key".
+                if _lower_run_len(i + 1) > 1:
+                    out.append("_")
+
+        out.append(ch.lower())
+
+    # Normalize a few separators.
+    return re.sub(r"[-\s]+", "_", "".join(out))
 
 
 def snake_to_camel(name: str) -> str:

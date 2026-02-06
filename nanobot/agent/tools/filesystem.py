@@ -199,7 +199,10 @@ class EditFileTool(Tool):
             # Count occurrences
             count = content.count(old_text)
             if count > 1:
-                return f"Warning: old_text appears {count} times. Please provide more context to make it unique."
+                return (
+                    f"Error: old_text appears {count} times. "
+                    "Please provide more context to make it unique."
+                )
             
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")

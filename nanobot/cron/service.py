@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
@@ -30,9 +31,22 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     if schedule.kind == "cron" and schedule.expr:
         try:
             from croniter import croniter
-            cron = croniter(schedule.expr, time.time())
-            next_time = cron.get_next()
-            return int(next_time * 1000)
+            base_dt = datetime.fromtimestamp(now_ms / 1000, tz=timezone.utc)
+            if schedule.tz:
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    base_dt = base_dt.astimezone(ZoneInfo(schedule.tz))
+                except Exception:
+                    # If the timezone is invalid/unavailable, fall back to UTC.
+                    logger.warning(f"Invalid cron timezone '{schedule.tz}', falling back to UTC")
+
+            cron = croniter(schedule.expr, base_dt)
+            next_dt = cron.get_next(datetime)
+            return int(next_dt.timestamp() * 1000)
+        except ModuleNotFoundError:
+            logger.warning("croniter is not installed; cannot compute cron schedule next run time")
+            return None
         except Exception:
             return None
     

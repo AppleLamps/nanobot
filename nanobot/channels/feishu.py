@@ -200,7 +200,14 @@ class FeishuChannel(BaseChannel):
                         .build()
                     ).build()
 
-                response = self._client.im.v1.message.create(request)
+                # lark-oapi's message.create() is synchronous and can block the async loop.
+                # Offload to the default thread pool.
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    self._client.im.v1.message.create,
+                    request,
+                )
 
                 if not response.success():
                     logger.error(

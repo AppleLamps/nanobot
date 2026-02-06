@@ -70,6 +70,22 @@ class _ToggleTool(Tool):
     async def execute(self, ok: bool, **kwargs: Any) -> str:
         return "ok" if ok else "Error: tool failed"
 
+class _WarnTool(Tool):
+    @property
+    def name(self) -> str:
+        return "warn_tool"
+
+    @property
+    def description(self) -> str:
+        return "returns a warning string"
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs: Any) -> str:
+        return "Warning: ambiguous input"
+
 
 async def test_tool_error_backoff_aborts_after_streak(tmp_path, monkeypatch) -> None:
     # Avoid writing sessions under the real home directory during tests.
@@ -177,3 +193,33 @@ async def test_system_message_tool_backoff_uses_system_wording(tmp_path, monkeyp
         "Please rephrase or provide more specific inputs."
     )
 
+
+async def test_tool_error_backoff_counts_warnings(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path))
+
+    bus = MessageBus()
+    provider = _SeqProvider(
+        [
+            LLMResponse(
+                content=None,
+                tool_calls=[ToolCallRequest(id="t1", name="warn_tool", arguments={})],
+            ),
+            LLMResponse(
+                content=None,
+                tool_calls=[ToolCallRequest(id="t2", name="warn_tool", arguments={})],
+            ),
+        ]
+    )
+    cfg = AgentDefaults(max_tool_iterations=10, tool_error_backoff=2)
+    loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, agent_config=cfg)
+    loop.tools.register(_WarnTool())
+
+    msg = InboundMessage(channel="cli", sender_id="u", chat_id="c", content="hi")
+    out = await loop._process_message(msg)
+
+    assert provider.calls == 2
+    assert out is not None
+    assert out.content == (
+        "I'm hitting repeated tool errors. "
+        "Please rephrase or provide more specific inputs."
+    )

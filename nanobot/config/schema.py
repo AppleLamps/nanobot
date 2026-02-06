@@ -139,6 +139,33 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+
+    def _select_provider(self) -> tuple[str | None, ProviderConfig | None]:
+        """
+        Select the configured provider in priority order.
+
+        Important: selection must be shared by get_api_key() and get_api_base() to avoid
+        mismatched (api_key, api_base) pairs.
+        """
+        if self.providers.openrouter.api_key:
+            return "openrouter", self.providers.openrouter
+        if self.providers.anthropic.api_key:
+            return "anthropic", self.providers.anthropic
+        if self.providers.openai.api_key:
+            return "openai", self.providers.openai
+        if self.providers.gemini.api_key:
+            return "gemini", self.providers.gemini
+        if self.providers.zhipu.api_key:
+            return "zhipu", self.providers.zhipu
+        if self.providers.groq.api_key:
+            return "groq", self.providers.groq
+
+        # vLLM/custom endpoint (lowest priority). If only a base URL is configured, this still
+        # selects vLLM so get_api_base() stays consistent; get_api_key() may still be None.
+        if self.providers.vllm.api_key or self.providers.vllm.api_base:
+            return "vllm", self.providers.vllm
+
+        return None, None
     
     @property
     def workspace_path(self) -> Path:
@@ -146,27 +173,20 @@ class Config(BaseSettings):
         return Path(self.agents.defaults.workspace).expanduser()
     
     def get_api_key(self) -> str | None:
-        """Get API key in priority order: OpenRouter > Anthropic > OpenAI > Gemini > Zhipu > Groq > vLLM."""
-        return (
-            self.providers.openrouter.api_key or
-            self.providers.anthropic.api_key or
-            self.providers.openai.api_key or
-            self.providers.gemini.api_key or
-            self.providers.zhipu.api_key or
-            self.providers.groq.api_key or
-            self.providers.vllm.api_key or
-            None
-        )
+        """Get the API key for the selected provider (see _select_provider())."""
+        _name, cfg = self._select_provider()
+        if not cfg:
+            return None
+        return cfg.api_key or None
     
     def get_api_base(self) -> str | None:
-        """Get API base URL if using OpenRouter, Zhipu or vLLM."""
-        if self.providers.openrouter.api_key:
-            return self.providers.openrouter.api_base or "https://openrouter.ai/api/v1"
-        if self.providers.zhipu.api_key:
-            return self.providers.zhipu.api_base
-        if self.providers.vllm.api_base:
-            return self.providers.vllm.api_base
-        return None
+        """Get the API base URL for the selected provider (see _select_provider())."""
+        name, cfg = self._select_provider()
+        if not cfg:
+            return None
+        if name == "openrouter":
+            return cfg.api_base or "https://openrouter.ai/api/v1"
+        return cfg.api_base
     
     class Config:
         env_prefix = "NANOBOT_"

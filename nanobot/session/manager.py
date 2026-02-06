@@ -225,7 +225,11 @@ class SessionManager:
                     if first_line:
                         data = json.loads(first_line)
                         if data.get("_type") == "metadata":
-                            key = data.get("key") or path.stem.replace("_", ":")
+                            # Metadata written by this codebase always includes the real key.
+                            # If it's missing (e.g., corrupted/legacy files), do not attempt to
+                            # reconstruct from the filename because it's lossy (underscores are valid
+                            # in keys and cannot be distinguished from ":"->"_" replacement).
+                            key = data.get("key") or path.stem
                             sessions.append({
                                 "key": key,
                                 "created_at": data.get("created_at"),

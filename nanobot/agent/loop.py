@@ -189,7 +189,8 @@ class AgentLoop:
         self.tools.register(SpawnTool(manager=self.subagents))
 
     def _is_tool_error(self, result: str) -> bool:
-        return result.strip().lower().startswith("error:")
+        s = result.strip().lower()
+        return s.startswith("error:") or s.startswith("warning:")
 
     def _get_session_max_tokens(self, session: "Session") -> int:
         if not self.auto_tune_max_tokens:
@@ -307,6 +308,92 @@ class AgentLoop:
         self._running = False
         logger.info("Agent loop stopping")
 
+    async def _run_tool_loop(
+        self,
+        *,
+        session: "Session",
+        messages: list[dict[str, Any]],
+        tools: ToolRegistry,
+        tool_error_backoff_message: str,
+        no_response_message: str,
+    ) -> str:
+        iteration = 0
+        final_content: str | None = None
+        tool_error_streak = 0
+
+        while iteration < self.max_iterations:
+            iteration += 1
+
+            max_tokens_used = self._get_session_max_tokens(session)
+
+            response = await self.provider.chat(
+                messages=messages,
+                tools=tools.get_definitions(),
+                model=self.model,
+                max_tokens=max_tokens_used,
+                temperature=self.temperature,
+            )
+
+            self._record_usage(session, response.usage, max_tokens_used)
+
+            if response.has_tool_calls:
+                tool_call_dicts = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in response.tool_calls
+                ]
+                messages = self.context.add_assistant_message(
+                    messages, response.content, tool_call_dicts
+                )
+
+                abort_loop = False
+                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
+                for tool_call, result in zip(response.tool_calls, results):
+                    logger.debug(
+                        f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
+                    )
+                    messages = self.context.add_tool_result(
+                        messages,
+                        tool_call.id,
+                        tool_call.name,
+                        result,
+                    )
+
+                    if self.tool_error_backoff > 0:
+                        if self._is_tool_error(result):
+                            tool_error_streak += 1
+                        else:
+                            tool_error_streak = 0
+
+                        if tool_error_streak >= self.tool_error_backoff:
+                            final_content = tool_error_backoff_message
+                            abort_loop = True
+                            break
+
+                if abort_loop:
+                    break
+
+                continue
+
+            final_content = response.content
+            self._maybe_autotune_max_tokens(
+                session,
+                response.usage.get("completion_tokens") if response.usage else None,
+                max_tokens_used,
+            )
+            break
+
+        if final_content is None:
+            final_content = no_response_message
+
+        return final_content
+
     async def _process_message(
         self,
         msg: InboundMessage,
@@ -345,77 +432,16 @@ class AgentLoop:
             media=msg.media if msg.media else None,
         )
 
-        iteration = 0
-        final_content: str | None = None
-        tool_error_streak = 0
-
-        while iteration < self.max_iterations:
-            iteration += 1
-
-            max_tokens_used = self._get_session_max_tokens(session)
-
-            response = await self.provider.chat(
-                messages=messages,
-                tools=tools.get_definitions(),
-                model=self.model,
-                max_tokens=max_tokens_used,
-                temperature=self.temperature,
-            )
-
-            self._record_usage(session, response.usage, max_tokens_used)
-
-            if response.has_tool_calls:
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
-                        },
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(messages, response.content, tool_call_dicts)
-
-                abort_loop = False
-                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
-                for tool_call, result in zip(response.tool_calls, results):
-                    logger.debug(
-                        f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
-                    )
-                    messages = self.context.add_tool_result(
-                        messages,
-                        tool_call.id,
-                        tool_call.name,
-                        result,
-                    )
-                    if self.tool_error_backoff > 0:
-                        if self._is_tool_error(result):
-                            tool_error_streak += 1
-                        else:
-                            tool_error_streak = 0
-                        if tool_error_streak >= self.tool_error_backoff:
-                            final_content = (
-                                "I'm hitting repeated tool errors. "
-                                "Please rephrase or provide more specific inputs."
-                            )
-                            abort_loop = True
-                            break
-
-                if abort_loop:
-                    break
-            else:
-                final_content = response.content
-                self._maybe_autotune_max_tokens(
-                    session,
-                    response.usage.get("completion_tokens") if response.usage else None,
-                    max_tokens_used,
-                )
-                break
-
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
+        final_content = await self._run_tool_loop(
+            session=session,
+            messages=messages,
+            tools=tools,
+            tool_error_backoff_message=(
+                "I'm hitting repeated tool errors. "
+                "Please rephrase or provide more specific inputs."
+            ),
+            no_response_message="I've completed processing but have no response to give.",
+        )
 
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content)
@@ -456,76 +482,16 @@ class AgentLoop:
             memory_key=session_key,
         )
 
-        iteration = 0
-        final_content: str | None = None
-        tool_error_streak = 0
-
-        while iteration < self.max_iterations:
-            iteration += 1
-
-            max_tokens_used = self._get_session_max_tokens(session)
-            response = await self.provider.chat(
-                messages=messages,
-                tools=tools.get_definitions(),
-                model=self.model,
-                max_tokens=max_tokens_used,
-                temperature=self.temperature,
-            )
-
-            self._record_usage(session, response.usage, max_tokens_used)
-
-            if response.has_tool_calls:
-                tool_call_dicts = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments),
-                        },
-                    }
-                    for tc in response.tool_calls
-                ]
-                messages = self.context.add_assistant_message(messages, response.content, tool_call_dicts)
-
-                abort_loop = False
-                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
-                for tool_call, result in zip(response.tool_calls, results):
-                    logger.debug(
-                        f"Executing tool: {tool_call.name} with arguments: {tool_call.arguments}"
-                    )
-                    messages = self.context.add_tool_result(
-                        messages,
-                        tool_call.id,
-                        tool_call.name,
-                        result,
-                    )
-                    if self.tool_error_backoff > 0:
-                        if self._is_tool_error(result):
-                            tool_error_streak += 1
-                        else:
-                            tool_error_streak = 0
-                        if tool_error_streak >= self.tool_error_backoff:
-                            final_content = (
-                                "Background task hit repeated tool errors. "
-                                "Please rephrase or provide more specific inputs."
-                            )
-                            abort_loop = True
-                            break
-
-                if abort_loop:
-                    break
-            else:
-                final_content = response.content
-                self._maybe_autotune_max_tokens(
-                    session,
-                    response.usage.get("completion_tokens") if response.usage else None,
-                    max_tokens_used,
-                )
-                break
-
-        if final_content is None:
-            final_content = "Background task completed."
+        final_content = await self._run_tool_loop(
+            session=session,
+            messages=messages,
+            tools=tools,
+            tool_error_backoff_message=(
+                "Background task hit repeated tool errors. "
+                "Please rephrase or provide more specific inputs."
+            ),
+            no_response_message="Background task completed.",
+        )
 
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
