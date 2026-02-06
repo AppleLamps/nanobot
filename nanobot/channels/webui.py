@@ -466,10 +466,26 @@ class WebUIChannel(BaseChannel):
 
         key = _ClientKey(chat_id=str(chat_id), sender_id=str(sender_id), session_key=str(session_key))
 
+        # Disconnect duplicate clients for the same session+sender.
+        to_close: list[Any] = []
         async with self._clients_lock:
+            for old_ws, old_key in list(self._clients.items()):
+                if old_key.session_key == key.session_key and old_key.sender_id == key.sender_id:
+                    to_close.append(old_ws)
             self._clients[ws] = key
             self._by_chat.setdefault(key.chat_id, set()).add(ws)
             self._uploads.setdefault(ws, {})
+
+        if to_close:
+            logger.warning(
+                f"Duplicate WebUI client detected for session={key.session_key} sender={key.sender_id}; "
+                f"disconnecting {len(to_close)} older connection(s)."
+            )
+            for old_ws in to_close:
+                try:
+                    await old_ws.close(code=4400, reason="duplicate session")
+                except Exception:
+                    pass
 
         await ws.send(json.dumps({"type": "session", "chat_id": key.chat_id, "sender_id": key.sender_id, "session_key": key.session_key}))
         await self._send_history(ws, chat_id=key.chat_id, session_key=key.session_key)

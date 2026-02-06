@@ -6,6 +6,7 @@ import pytest
 import litellm
 
 import nanobot.providers.litellm_provider as lp
+from nanobot.providers.base import LLMError
 
 
 @pytest.mark.asyncio
@@ -74,4 +75,31 @@ async def test_litellm_provider_passes_api_key_and_api_base_per_request(monkeypa
     assert out.content == "ok"
     assert captured.get("api_key") == "k1"
     assert captured.get("api_base") == "http://127.0.0.1:8000/v1"
+
+
+@pytest.mark.asyncio
+async def test_litellm_provider_wraps_litellm_errors(monkeypatch) -> None:
+    class _FakeBadRequestError(Exception):
+        def __init__(self, message: str, status_code: int | None = None):
+            super().__init__(message)
+            self.status_code = status_code
+
+    async def fake_acompletion(**kwargs: Any):
+        raise _FakeBadRequestError("boom", status_code=429)
+
+    monkeypatch.setattr(lp, "acompletion", fake_acompletion)
+    monkeypatch.setattr(lp.litellm, "BadRequestError", _FakeBadRequestError)
+
+    provider = lp.LiteLLMProvider(
+        api_key="k1",
+        api_base="http://127.0.0.1:8000/v1",
+        default_model="openai/gpt-4o",
+    )
+
+    with pytest.raises(LLMError) as excinfo:
+        await provider.chat(messages=[{"role": "user", "content": "hi"}])
+
+    err = excinfo.value
+    assert err.status_code == 429
+    assert err.retryable is True
 

@@ -1,11 +1,12 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import json
 from typing import Any
 
 import litellm
 from litellm import acompletion
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import LLMError, LLMProvider, LLMResponse, ToolCallRequest
 
 
 class LiteLLMProvider(LLMProvider):
@@ -25,26 +26,48 @@ class LiteLLMProvider(LLMProvider):
         "bedrock/",
         "openrouter/",
     )
+
+    _PROVIDER_PREFIXES = {
+        "openrouter": "openrouter/",
+        "openai": "openai/",
+        "anthropic": "anthropic/",
+        "gemini": "gemini/",
+        "groq": "groq/",
+        "zhipu": "zhipu/",
+        "zai": "zai/",
+        "bedrock": "bedrock/",
+        "vllm": "hosted_vllm/",
+    }
     
     def __init__(
         self, 
         api_key: str | None = None, 
         api_base: str | None = None,
-        default_model: str = "anthropic/claude-opus-4-5"
+        default_model: str = "anthropic/claude-opus-4-5",
+        provider: str | None = None,
     ):
         super().__init__(api_key, api_base)
         self.default_model = default_model
+        self.provider = (provider or "").strip().lower() or None
         
-        # Detect OpenRouter by api_key prefix or explicit api_base
-        self.is_openrouter = (
-            (api_key and api_key.startswith("sk-or-")) or
-            (api_base and "openrouter" in api_base) or
-            default_model.startswith("openrouter/")
-        )
+        # Detect OpenRouter by explicit provider or fallback heuristics.
+        self.is_openrouter = False
+        if self.provider:
+            self.is_openrouter = self.provider == "openrouter"
+        else:
+            self.is_openrouter = (
+                (api_key and api_key.startswith("sk-or-")) or
+                (api_base and "openrouter" in api_base) or
+                default_model.startswith("openrouter/")
+            )
         
         # Track if using a custom OpenAI-compatible endpoint (vLLM, etc.).
         # Do not infer "vLLM" from api_base alone, because other providers can also have api_base.
-        self.is_vllm = bool(api_base) and (not self.is_openrouter) and self._is_openai_compatible_model(default_model)
+        self.is_vllm = False
+        if self.provider:
+            self.is_vllm = self.provider == "vllm"
+        else:
+            self.is_vllm = default_model.startswith("hosted_vllm/")
         
         # Disable LiteLLM logging noise
         litellm.suppress_debug_info = True
@@ -60,6 +83,29 @@ class LiteLLMProvider(LLMProvider):
         if "/" not in lower:
             return True
         return lower.startswith("openai/")
+
+    def _apply_provider_prefix(self, model: str) -> str:
+        if not model:
+            return model
+        provider = self.provider or ("openrouter" if self.is_openrouter else None)
+        if not provider:
+            return model
+        prefix = self._PROVIDER_PREFIXES.get(provider)
+        if not prefix:
+            return model
+        if model.startswith(prefix):
+            return model
+        return f"{prefix}{model}"
+
+    def _build_llm_error(self, exc: Exception) -> LLMError:
+        status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+        retryable = False
+        timeout_exc = getattr(litellm, "Timeout", None)
+        if timeout_exc and isinstance(exc, timeout_exc):
+            retryable = True
+        if isinstance(status_code, int) and status_code in (429, 503):
+            retryable = True
+        return LLMError(message=str(exc), status_code=status_code, retryable=retryable)
     
     async def chat(
         self,
@@ -83,34 +129,15 @@ class LiteLLMProvider(LLMProvider):
             LLMResponse with content and/or tool calls.
         """
         model = model or self.default_model
-        
-        # For OpenRouter, prefix model name if not already prefixed
-        if self.is_openrouter and not model.startswith("openrouter/"):
-            model = f"openrouter/{model}"
-        
-        # For Zhipu/Z.ai, ensure prefix is present
-        # Handle cases like "glm-4.7-flash" -> "zai/glm-4.7-flash"
-        if ("glm" in model.lower() or "zhipu" in model.lower()) and not (
-            model.startswith("zhipu/") or 
-            model.startswith("zai/") or 
-            model.startswith("openrouter/")
-        ):
-            model = f"zai/{model}"
-        
-        # For vLLM, use hosted_vllm/ prefix per LiteLLM docs
-        # Convert openai/ prefix to hosted_vllm/ if user specified it
-        if self.is_vllm and not model.startswith("hosted_vllm/"):
-            model = f"hosted_vllm/{model}"
-        
-        # For Gemini, ensure gemini/ prefix if not already present
-        if "gemini" in model.lower() and not model.startswith("gemini/"):
-            model = f"gemini/{model}"
+
+        model = self._apply_provider_prefix(model)
         
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
+            "num_retries": 2,
         }
         
         # Pass credentials per-request to avoid global os.environ mutation and reduce secret leakage
@@ -129,12 +156,21 @@ class LiteLLMProvider(LLMProvider):
         try:
             response = await acompletion(**kwargs)
             return self._parse_response(response)
-        except Exception as e:
-            # Return error as content for graceful handling
-            return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
-                finish_reason="error",
+        except tuple(
+            exc
+            for exc in (
+                getattr(litellm, "BadRequestError", None),
+                getattr(litellm, "AuthenticationError", None),
+                getattr(litellm, "PermissionDeniedError", None),
+                getattr(litellm, "NotFoundError", None),
+                getattr(litellm, "RateLimitError", None),
+                getattr(litellm, "ServiceUnavailableError", None),
+                getattr(litellm, "Timeout", None),
+                getattr(litellm, "APIError", None),
             )
+            if exc
+        ) as e:
+            raise self._build_llm_error(e) from e
     
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
@@ -147,7 +183,6 @@ class LiteLLMProvider(LLMProvider):
                 # Parse arguments from JSON string if needed
                 args = tc.function.arguments
                 if isinstance(args, str):
-                    import json
                     try:
                         args = json.loads(args)
                     except json.JSONDecodeError:

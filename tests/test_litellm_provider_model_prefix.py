@@ -39,3 +39,38 @@ async def test_litellm_provider_prefixes_openrouter_models(monkeypatch) -> None:
     assert out.content == "ok"
     assert captured["model"].startswith("openrouter/")
 
+
+@pytest.mark.asyncio
+async def test_litellm_provider_prefixes_by_explicit_provider(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any):
+        captured.update(kwargs)
+
+        class _Msg:
+            content = "ok"
+            tool_calls = None
+
+        class _Choice:
+            message = _Msg()
+            finish_reason = "stop"
+
+        class _Resp:
+            choices = [_Choice()]
+            usage = None
+
+        return _Resp()
+
+    monkeypatch.setattr(lp, "acompletion", fake_acompletion)
+
+    provider = lp.LiteLLMProvider(
+        api_key="k1",
+        api_base="https://openrouter.ai/api/v1",
+        default_model="claude-3-5-sonnet",
+        provider="openrouter",
+    )
+
+    out = await provider.chat(messages=[{"role": "user", "content": "hi"}], model="claude-3-5-sonnet")
+    assert out.content == "ok"
+    assert captured["model"] == "openrouter/claude-3-5-sonnet"
+

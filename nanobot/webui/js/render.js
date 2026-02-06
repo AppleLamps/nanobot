@@ -46,7 +46,7 @@ export function autogrow() {
   dom.input.style.height = Math.min(dom.input.scrollHeight, 160) + "px";
 }
 
-/* --- Markdown-ish renderer --- */
+/* --- Markdown renderer --- */
 
 function esc(s) {
   return String(s ?? "")
@@ -63,13 +63,13 @@ function safeLink(url) {
   return null;
 }
 
-export function renderMarkdownish(text) {
+export function renderMarkdown(text) {
   const t = String(text ?? "");
   const root = document.createElement("div");
   const re = /```([\w+-]*)\n([\s\S]*?)```/g;
   let last = 0;
 
-  function addTextBlock(s) {
+  function inlineHtml(s) {
     let x = esc(s);
     x = x.replace(/`([^`]+)`/g, (m, c) => `<code>${esc(c)}</code>`);
     x = x.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -83,16 +83,103 @@ export function renderMarkdownish(text) {
       if (!href) return `${label} (${url})`;
       return `<a href="${href}" target="_blank" rel="noreferrer noopener">${label}</a>`;
     });
-    x = x.replace(/\n/g, "<br/>");
-    const span = document.createElement("span");
-    span.innerHTML = x;
-    root.appendChild(span);
+    return x;
+  }
+
+  function addTextBlock(s) {
+    const lines = String(s || "").split(/\r?\n/);
+    let para = [];
+    let listEl = null;
+    let listType = "";
+
+    function flushPara() {
+      if (!para.length) return;
+      const p = document.createElement("p");
+      p.innerHTML = inlineHtml(para.join(" ").trim());
+      root.appendChild(p);
+      para = [];
+    }
+
+    function flushList() {
+      if (listEl) root.appendChild(listEl);
+      listEl = null;
+      listType = "";
+    }
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (!trimmed) {
+        flushPara();
+        flushList();
+        continue;
+      }
+
+      if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+        flushPara();
+        flushList();
+        root.appendChild(document.createElement("hr"));
+        continue;
+      }
+
+      const heading = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+      if (heading) {
+        flushPara();
+        flushList();
+        const h = document.createElement(`h${heading[1].length}`);
+        h.innerHTML = inlineHtml(heading[2]);
+        root.appendChild(h);
+        continue;
+      }
+
+      if (trimmed.startsWith(">")) {
+        flushPara();
+        flushList();
+        const parts = [];
+        for (; i < lines.length; i++) {
+          const l = lines[i];
+          if (!l.trim().startsWith(">")) break;
+          parts.push(l.replace(/^\s*>\s?/, "").trim());
+        }
+        i -= 1;
+        const bq = document.createElement("blockquote");
+        const p = document.createElement("p");
+        p.innerHTML = inlineHtml(parts.join(" "));
+        bq.appendChild(p);
+        root.appendChild(bq);
+        continue;
+      }
+
+      const ol = /^\d+\.\s+(.+)$/.exec(trimmed);
+      const ul = /^[-*+]\s+(.+)$/.exec(trimmed);
+      if (ol || ul) {
+        flushPara();
+        const nextType = ol ? "ol" : "ul";
+        if (!listEl || listType !== nextType) {
+          flushList();
+          listEl = document.createElement(nextType);
+          listType = nextType;
+        }
+        const li = document.createElement("li");
+        li.innerHTML = inlineHtml((ol || ul)[1]);
+        listEl.appendChild(li);
+        continue;
+      }
+
+      para.push(trimmed);
+    }
+
+    flushPara();
+    flushList();
   }
 
   for (let m; (m = re.exec(t));) {
     if (m.index > last) addTextBlock(t.slice(last, m.index));
     const pre = document.createElement("pre");
     const code = document.createElement("code");
+    const lang = (m[1] || "").trim();
+    if (lang) code.className = `language-${lang}`;
     code.textContent = m[2] || "";
     pre.appendChild(code);
     root.appendChild(pre);
@@ -133,7 +220,7 @@ export function addRow(role, text, opts) {
 
   const content = document.createElement("div");
   content.className = "content";
-  content.appendChild(renderMarkdownish(text));
+  content.appendChild(renderMarkdown(text));
   bubble.appendChild(content);
 
   wrap.appendChild(meta);

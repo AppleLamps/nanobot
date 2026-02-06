@@ -585,7 +585,8 @@ def gateway(
     provider = LiteLLMProvider(
         api_key=api_key,
         api_base=api_base,
-        default_model=config.agents.defaults.model
+        default_model=config.agents.defaults.model,
+        provider=config.agents.defaults.provider,
     )
     
     # Create agent
@@ -737,7 +738,8 @@ def agent(
     provider = LiteLLMProvider(
         api_key=api_key,
         api_base=api_base,
-        default_model=config.agents.defaults.model
+        default_model=config.agents.defaults.model,
+        provider=config.agents.defaults.provider,
     )
     
     agent_loop = AgentLoop(

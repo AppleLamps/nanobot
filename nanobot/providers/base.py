@@ -27,6 +27,16 @@ class LLMResponse:
         return len(self.tool_calls) > 0
 
 
+class LLMError(Exception):
+    """Provider error with retry hints and status code."""
+
+    def __init__(self, message: str, status_code: int | None = None, retryable: bool = False):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retryable = retryable
+        self.message = message
+
+
 class LLMProvider(ABC):
     """
     Abstract base class for LLM providers.

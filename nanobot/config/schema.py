@@ -1,7 +1,9 @@
 """Configuration schema using Pydantic."""
 
 from pathlib import Path
-from pydantic import BaseModel, Field
+import warnings
+
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -55,6 +57,7 @@ class ChannelsConfig(BaseModel):
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
     workspace: str = "~/.nanobot/workspace"
+    provider: str = ""
     model: str = "openai/gpt-oss-120b:exacto"
     max_tokens: int = 8192
     temperature: float = 0.7
@@ -140,8 +143,41 @@ class Config(BaseSettings):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
 
+    @model_validator(mode="after")
+    def _validate_provider_model(self) -> "Config":
+        provider = (self.agents.defaults.provider or "").strip().lower()
+        model = (self.agents.defaults.model or "").strip()
+        if not provider or not model or "/" not in model:
+            return self
+
+        model_prefix = model.split("/", 1)[0].strip().lower()
+        provider_prefixes = {
+            "openrouter": {"openrouter"},
+            "openai": {"openai"},
+            "anthropic": {"anthropic"},
+            "gemini": {"gemini"},
+            "groq": {"groq"},
+            "zhipu": {"zhipu", "zai"},
+            "vllm": {"hosted_vllm"},
+            "bedrock": {"bedrock"},
+        }
+        known_prefixes = {p for prefixes in provider_prefixes.values() for p in prefixes}
+        if model_prefix in known_prefixes and model_prefix not in provider_prefixes.get(provider, {provider}):
+            warnings.warn(
+                f"Provider '{provider}' does not match model prefix '{model_prefix}'.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return self
+
     def _select_provider(self) -> tuple[str | None, ProviderConfig | None]:
         """
+        explicit = (self.agents.defaults.provider or "").strip().lower()
+        if explicit:
+            cfg = getattr(self.providers, explicit, None)
+            if cfg is not None:
+                return explicit, cfg
+            return None, None
         Select the configured provider in priority order.
 
         Important: selection must be shared by get_api_key() and get_api_base() to avoid

@@ -5,7 +5,7 @@ import {
   setStatus,
   toastMsg,
   addRow,
-  renderMarkdownish,
+  renderMarkdown,
   renderHistory,
   updateEmpty,
 } from "./render.js";
@@ -175,7 +175,7 @@ export function connect() {
         const node = state.thinkingRow.querySelector(".content");
         if (node) {
           node.innerHTML = "";
-          node.appendChild(renderMarkdownish(c));
+          node.appendChild(renderMarkdown(c));
         }
       } else if (dom.latency && c) {
         dom.latency.textContent = c;
