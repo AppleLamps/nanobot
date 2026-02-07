@@ -256,8 +256,9 @@ async function send() {
     }, 1000);
   }
 
-  addRow("user", text || "(attachment)", { autoscroll: true });
-  state.serverHistory.push({ role: "user", content: text || "" });
+  const userAttachments = [...state.attachments];
+  addRow("user", text || "(attachment)", { autoscroll: true, attachments: userAttachments });
+  state.serverHistory.push({ role: "user", content: text || "", attachments: userAttachments });
 
   dom.input.value = "";
   autogrow();
@@ -599,6 +600,24 @@ for (const b of Array.from(document.querySelectorAll(".chipbtn"))) {
 }
 
 /* --- Init --- */
+
+/* Pre-fetch all models and populate datalist for autocomplete */
+fetchModels().then(() => {
+  populateDatalist();
+});
+
+function populateDatalist() {
+  const dl = document.getElementById("model-presets-list");
+  if (!dl) return;
+  dl.innerHTML = "";
+  const models = state.allModels || [];
+  for (const m of models) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.label = m.name || m.id;
+    dl.appendChild(opt);
+  }
+}
 
 if (dom.sessionKey) dom.sessionKey.textContent = state.sessionKey;
 if (dom.modelPill) dom.modelPill.textContent = state.modelDefault || "default";

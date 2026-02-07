@@ -78,6 +78,11 @@ export function renderMarkdown(text) {
       /(?<![a-zA-Z0-9])_([^_]+)_(?![a-zA-Z0-9])/g,
       "<em>$1</em>"
     );
+    x = x.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (m, alt, url) => {
+      const href = safeLink(url);
+      if (!href) return "";
+      return `<img src="${href}" alt="${alt}" class="msg-img" loading="lazy" />`;
+    });
     x = x.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => {
       const href = safeLink(url);
       if (!href) return `${label} (${url})`;
@@ -220,6 +225,34 @@ export function addRow(role, text, opts) {
 
   const content = document.createElement("div");
   content.className = "content";
+
+  if (opts && (opts.media || opts.attachments)) {
+    const list = opts.media || opts.attachments;
+    if (Array.isArray(list) && list.length > 0) {
+      const attachDiv = document.createElement("div");
+      attachDiv.className = "msg-attachments";
+      for (const item of list) {
+        let url;
+        if (item instanceof File) {
+          url = URL.createObjectURL(item);
+        } else if (typeof item === "string") {
+          url = item;
+        } else if (item && item.url) {
+          url = item.url;
+        }
+
+        if (url) {
+          const img = document.createElement("img");
+          img.src = url;
+          img.className = "msg-img";
+          img.loading = "lazy";
+          attachDiv.appendChild(img);
+        }
+      }
+      content.appendChild(attachDiv);
+    }
+  }
+
   content.appendChild(renderMarkdown(text));
   bubble.appendChild(content);
 
@@ -270,7 +303,9 @@ export function renderHistory(msgs) {
   state.serverHistory = Array.isArray(msgs) ? msgs : [];
   state.lastHistoryEmpty = state.serverHistory.length === 0;
   clearRows();
-  for (const m of state.serverHistory) addRow(m.role, m.content);
+  for (const m of state.serverHistory) {
+    addRow(m.role, m.content, { media: m.media, attachments: m.attachments });
+  }
   updateEmpty();
   scrollToBottom();
   updateJump();
@@ -283,25 +318,51 @@ export function renderAttachments() {
   dom.attachments.innerHTML = "";
   for (let i = 0; i < state.attachments.length; i++) {
     const f = state.attachments[i];
-    const chip = document.createElement("div");
-    chip.className = "chip";
+    const isImage = f.type && f.type.startsWith("image/");
 
-    const name = document.createElement("div");
-    name.className = "name";
-    name.textContent = f.name;
+    if (isImage) {
+      const card = document.createElement("div");
+      card.className = "attach-card";
 
-    const x = document.createElement("button");
-    x.className = "x";
-    x.type = "button";
-    x.textContent = "x";
-    x.addEventListener("click", () => {
-      state.attachments.splice(i, 1);
-      renderAttachments();
-    });
+      const img = document.createElement("img");
+      img.className = "attach-card-img";
+      img.src = URL.createObjectURL(f);
+      img.alt = f.name;
+      card.appendChild(img);
 
-    chip.appendChild(name);
-    chip.appendChild(x);
-    dom.attachments.appendChild(chip);
+      const x = document.createElement("button");
+      x.className = "attach-card-x";
+      x.type = "button";
+      x.title = "Remove";
+      x.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+      x.addEventListener("click", () => {
+        state.attachments.splice(i, 1);
+        renderAttachments();
+      });
+      card.appendChild(x);
+
+      dom.attachments.appendChild(card);
+    } else {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+
+      const name = document.createElement("div");
+      name.className = "name";
+      name.textContent = f.name;
+
+      const x = document.createElement("button");
+      x.className = "x";
+      x.type = "button";
+      x.textContent = "×";
+      x.addEventListener("click", () => {
+        state.attachments.splice(i, 1);
+        renderAttachments();
+      });
+
+      chip.appendChild(name);
+      chip.appendChild(x);
+      dom.attachments.appendChild(chip);
+    }
   }
 }
 

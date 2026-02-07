@@ -125,16 +125,18 @@
               <span class="kbd">Enter</span> send,
               <span class="kbd">Shift</span>+<span class="kbd">Enter</span> newline
             </div>
-            <div class="model-row">
-              <button class="model-trigger" id="model-trigger" type="button" title="Choose model">
-                <span id="model-pill">default</span>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-                  stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
+            <div class="foot-right">
+              <div class="model-row">
+                <button class="model-trigger" id="model-trigger" type="button" title="Choose model">
+                  <span id="model-pill">default</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </button>
+              </div>
+              <div id="latency" class="latency"></div>
             </div>
-            <div id="latency" class="latency"></div>
           </div>
         </footer>
         <div class="status-bar" id="status-bar" aria-live="polite"></div>
@@ -218,13 +220,16 @@
             <button class="iconbtn" id="models-close" type="button">Close</button>
           </div>
           <div class="models-toolbar">
-            <input id="models-search" type="text" placeholder="Search models..." autocomplete="off" spellcheck="false" />
+            <input id="models-search" type="text" placeholder="Search models..." autocomplete="off"
+              spellcheck="false" />
             <label class="models-toggle"><input id="models-tools-only" type="checkbox" checked /> Tools</label>
             <label class="models-toggle"><input id="models-free-only" type="checkbox" /> Free</label>
           </div>
           <div class="modal-body" id="models-body"></div>
           <div class="models-custom">
-            <input id="models-custom-input" type="text" placeholder="Or type a custom model ID..." autocomplete="off" spellcheck="false" />
+            <input id="models-custom-input" list="model-presets-list" type="text"
+              placeholder="Or type a custom model ID..." autocomplete="off" spellcheck="false" />
+            <datalist id="model-presets-list"></datalist>
             <button class="btn-sm" id="models-custom-apply" type="button">Use</button>
           </div>
         </div>
