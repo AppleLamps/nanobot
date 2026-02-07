@@ -1,20 +1,22 @@
 /* base.css — variables, reset, body, background, layout shell, buttons */
 
 :root {
-  --bg0: #f6f1e7;
-  --bg1: #efe6d8;
-  --paper: #fbf7f1;
-  --paper2: #f4eee3;
-  --ink: #14110f;
-  --ink2: rgba(20, 17, 15, 0.72);
-  --ink3: rgba(20, 17, 15, 0.52);
-  --line: rgba(20, 17, 15, 0.14);
-  --line2: rgba(20, 17, 15, 0.22);
-  --shadow: 0 28px 90px rgba(10, 10, 10, 0.16);
-  --shadow2: 0 14px 30px rgba(10, 10, 10, 0.12);
-  --r: 22px;
-  --r2: 16px;
+  --bg0: #f9fafb;
+  --bg1: #f3f4f6;
+  --paper: #ffffff;
+  --paper2: #f9fafb;
+  --ink: #1a1a1a;
+  --ink2: rgba(26, 26, 26, 0.65);
+  --ink3: rgba(26, 26, 26, 0.45);
+  --line: rgba(0, 0, 0, 0.08);
+  --line2: rgba(0, 0, 0, 0.14);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow2: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --r: 12px;
+  --r2: 8px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
 }
 
 html,
@@ -25,32 +27,15 @@ body {
 body {
   margin: 0;
   color: var(--ink);
-  background: linear-gradient(180deg, var(--bg0), var(--bg1));
-  font-family: "Avenir Next", "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  letter-spacing: 0.01em;
+  background: var(--bg0);
+  font-family: var(--font-sans);
+  letter-spacing: 0;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
 
 .bg {
-  position: fixed;
-  inset: -120px;
-  pointer-events: none;
-  background:
-    radial-gradient(900px 700px at 10% -10%, rgba(0, 0, 0, 0.07), transparent 60%),
-    radial-gradient(700px 520px at 110% 10%, rgba(0, 0, 0, 0.06), transparent 60%),
-    radial-gradient(900px 700px at 60% 120%, rgba(0, 0, 0, 0.04), transparent 60%),
-    repeating-linear-gradient(
-      90deg,
-      rgba(20, 17, 15, 0.035) 0 1px,
-      transparent 1px 16px
-    ),
-    repeating-linear-gradient(
-      0deg,
-      rgba(20, 17, 15, 0.028) 0 1px,
-      transparent 1px 20px
-    );
-  opacity: 0.7;
-  transform: rotate(-0.35deg);
+  display: none;
 }
 
 .wrap {
@@ -65,9 +50,9 @@ body {
 .shell {
   width: min(1120px, 100%);
   height: min(860px, calc(100dvh - 36px));
-  border-radius: calc(var(--r) + 10px);
-  background: linear-gradient(180deg, rgba(251, 247, 241, 0.98), rgba(244, 238, 227, 0.96));
-  border: 2px solid rgba(20, 17, 15, 0.88);
+  border-radius: var(--r);
+  background: var(--paper);
+  border: 1px solid var(--line);
   box-shadow: var(--shadow);
   overflow: hidden;
   position: relative;
@@ -84,61 +69,63 @@ button {
 }
 
 .btn {
-  background: rgba(251, 247, 241, 0.85);
+  background: var(--paper);
   border: 1px solid var(--line2);
   color: var(--ink);
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-size: 12.5px;
-  letter-spacing: 0.03em;
-  transition: transform 0.12s var(--ease), background 0.12s var(--ease), border-color 0.12s var(--ease);
+  border-radius: var(--r2);
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
 }
 
 .btn:hover {
-  transform: translateY(-1px);
-  background: rgba(251, 247, 241, 0.98);
-  border-color: rgba(20, 17, 15, 0.42);
+  background: var(--bg1);
+  border-color: var(--line2);
 }
 
 .btn:active {
-  transform: translateY(0px);
+  background: var(--bg1);
 }
 
 .btn.primary {
-  background: rgba(20, 17, 15, 0.95);
-  border-color: rgba(20, 17, 15, 0.95);
-  color: rgba(251, 247, 241, 0.98);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.14);
+  background: #1a1a1a;
+  border-color: #1a1a1a;
+  color: #fff;
+  box-shadow: none;
 }
 
 .btn.primary:hover {
-  background: rgba(0, 0, 0, 0.98);
-  border-color: rgba(0, 0, 0, 0.98);
+  background: #333;
+  border-color: #333;
 }
 
 .btn:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-  transform: none;
 }
 
 .btn:focus-visible,
 .iconbtn:focus-visible,
 textarea:focus-visible,
 input:focus-visible {
-  outline: 3px solid rgba(0, 0, 0, 0.22);
+  outline: 2px solid rgba(0, 0, 0, 0.2);
   outline-offset: 2px;
 }
 
 .iconbtn {
   appearance: none;
-  border: 1px solid rgba(20, 17, 15, 0.22);
-  background: rgba(244, 238, 227, 0.9);
-  border-radius: 14px;
-  padding: 9px 12px;
-  font-size: 12.5px;
+  border: 1px solid var(--line2);
+  background: var(--paper);
+  border-radius: var(--r2);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.12s var(--ease), border-color 0.12s var(--ease);
 }
 
 .iconbtn:hover {
-  border-color: rgba(0, 0, 0, 0.52);
+  background: var(--bg1);
+  border-color: var(--line2);
 }

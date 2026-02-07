@@ -14,21 +14,214 @@ import {
 } from "./render.js";
 import { connect, uploadFile, waitFor } from "./connection.js";
 
-/* --- Fill model datalist --- */
+/* --- Model picker helpers --- */
 
-function fillModelDatalist() {
-  if (!dom.modelData) return;
-  dom.modelData.innerHTML = "";
-  for (const m of MODEL_PRESETS) {
-    const o = document.createElement("option");
-    o.value = m;
-    dom.modelData.appendChild(o);
+function fmtPrice(perToken) {
+  const n = parseFloat(perToken || "0");
+  if (n === 0) return "Free";
+  const perM = n * 1_000_000;
+  if (perM < 0.01) return `$${perM.toFixed(4)}`;
+  if (perM < 1) return `$${perM.toFixed(2)}`;
+  return `$${perM.toFixed(2)}`;
+}
+
+function fmtCtx(n) {
+  if (!n) return "";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  return String(n);
+}
+
+function shortName(name, id) {
+  /* Strip provider prefix from display name, e.g. "Anthropic: Claude Opus 4.6" -> "Claude Opus 4.6" */
+  const colon = name.indexOf(":");
+  if (colon > 0 && colon < name.length - 1) return name.slice(colon + 1).trim();
+  return name;
+}
+
+function providerOf(id) {
+  const slash = id.indexOf("/");
+  return slash > 0 ? id.slice(0, slash) : id;
+}
+
+const PRESET_SET = new Set(MODEL_PRESETS);
+
+async function fetchModels() {
+  if (state.allModels) return state.allModels;
+  try {
+    const qs = new URLSearchParams();
+    if (state.token) qs.set("token", state.token);
+    const url = "/api/models" + (qs.toString() ? `?${qs}` : "");
+    const resp = await fetch(url, { cache: "default" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    state.allModels = await resp.json();
+  } catch (e) {
+    toastMsg("Failed to load models.");
+    state.allModels = [];
   }
-  /* "Custom" hint — users can type any OpenRouter model name */
-  const custom = document.createElement("option");
-  custom.value = "";
-  custom.label = "Custom (type your openrouter model name)";
-  dom.modelData.appendChild(custom);
+  return state.allModels;
+}
+
+function renderModelsList(query, toolsOnly, freeOnly) {
+  if (!dom.modelsBody) return;
+  const models = state.allModels || [];
+  const q = (query || "").toLowerCase();
+
+  /* filter */
+  const filtered = models.filter((m) => {
+    if (q && !m.id.toLowerCase().includes(q) && !m.name.toLowerCase().includes(q)) return false;
+    if (toolsOnly && !m.tools) return false;
+    if (freeOnly && parseFloat(m.prompt || "0") === 0 && parseFloat(m.completion || "0") === 0) {
+      /* keep free models */
+    } else if (freeOnly) {
+      return false;
+    }
+    return true;
+  });
+
+  /* group: recommended first, then by provider */
+  const recommended = [];
+  const groups = new Map();
+
+  for (const m of filtered) {
+    if (PRESET_SET.has(m.id)) recommended.push(m);
+    const prov = providerOf(m.id);
+    if (!groups.has(prov)) groups.set(prov, []);
+    groups.get(prov).push(m);
+  }
+
+  /* sort groups alphabetically */
+  const sortedProviders = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+
+  /* build DOM */
+  const frag = document.createDocumentFragment();
+
+  /* "Use default" row */
+  const defRow = document.createElement("button");
+  defRow.className = "model-item model-item--default";
+  defRow.innerHTML = `<span class="mi-name">Use server default</span><span class="mi-id">Clears model override</span>`;
+  defRow.addEventListener("click", () => selectModel(""));
+  frag.appendChild(defRow);
+
+  /* Recommended group */
+  if (recommended.length > 0 && !q) {
+    const grp = buildGroup("Recommended", recommended);
+    frag.appendChild(grp);
+  }
+
+  /* Provider groups */
+  for (const prov of sortedProviders) {
+    const items = groups.get(prov);
+    const label = prov.charAt(0).toUpperCase() + prov.slice(1);
+    frag.appendChild(buildGroup(label, items));
+  }
+
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "models-empty";
+    empty.textContent = "No models match your search.";
+    frag.appendChild(empty);
+  }
+
+  dom.modelsBody.innerHTML = "";
+  dom.modelsBody.appendChild(frag);
+}
+
+function buildGroup(label, items) {
+  const grp = document.createElement("div");
+  grp.className = "models-group";
+  const head = document.createElement("div");
+  head.className = "models-group-head";
+  head.textContent = label;
+  grp.appendChild(head);
+
+  for (const m of items) {
+    const row = document.createElement("button");
+    row.className = "model-item" + (!m.tools ? " model-item--dim" : "");
+    if (m.id === (state.currentModel || state.modelDefault)) row.classList.add("model-item--active");
+
+    const isFree = parseFloat(m.prompt || "0") === 0 && parseFloat(m.completion || "0") === 0;
+    const badges = [];
+    if (isFree) badges.push(`<span class="mi-badge mi-badge--free">Free</span>`);
+    if (m.tools) badges.push(`<span class="mi-badge mi-badge--tools" title="Tools support">fn</span>`);
+    if (m.vision) badges.push(`<span class="mi-badge mi-badge--vision" title="Vision/image input">img</span>`);
+
+    const priceStr = isFree
+      ? ""
+      : `<span class="mi-price">${fmtPrice(m.prompt)} in / ${fmtPrice(m.completion)} out</span>`;
+    const ctxStr = m.ctx ? `<span class="mi-ctx">${fmtCtx(m.ctx)} ctx</span>` : "";
+
+    row.innerHTML = `
+      <div class="mi-left">
+        <span class="mi-name">${shortName(m.name, m.id)}</span>
+        <span class="mi-id">${m.id}</span>
+      </div>
+      <div class="mi-right">
+        ${badges.join("")}
+        ${priceStr}
+        ${ctxStr}
+      </div>`;
+
+    row.addEventListener("click", () => selectModel(m.id));
+    grp.appendChild(row);
+  }
+  return grp;
+}
+
+/* --- Model selection --- */
+
+function selectModel(modelId) {
+  const v = (modelId || "").trim();
+  applyModel(v);
+  closeModelsModal();
+}
+
+function applyModel(modelId) {
+  if (!state.ws || state.ws.readyState !== 1) {
+    toastMsg("Not connected yet.");
+    return;
+  }
+
+  const v = (typeof modelId === "string" ? modelId : "").trim();
+  state.modelDefault = v;
+  persist("modelDefault", state.modelDefault);
+  if (dom.modelPill) dom.modelPill.textContent = v || "default";
+
+  try {
+    state.ws.send(JSON.stringify({ type: "set_model", model: v }));
+    toastMsg(v ? "Model set." : "Model cleared.");
+  } catch (_) {
+    toastMsg("Failed to set model.");
+  }
+}
+
+/* --- Models modal --- */
+
+async function openModelsModal() {
+  if (!dom.modelsModal) return;
+  dom.modelsModal.classList.add("show");
+  dom.modelsModal.setAttribute("aria-hidden", "false");
+  if (dom.modelsSearch) {
+    dom.modelsSearch.value = "";
+    dom.modelsSearch.focus();
+  }
+  await fetchModels();
+  const toolsOnly = dom.modelsToolsOnly ? dom.modelsToolsOnly.checked : false;
+  const freeOnly = dom.modelsFreeOnly ? dom.modelsFreeOnly.checked : false;
+  renderModelsList("", toolsOnly, freeOnly);
+}
+
+function closeModelsModal() {
+  if (!dom.modelsModal) return;
+  dom.modelsModal.classList.remove("show");
+  dom.modelsModal.setAttribute("aria-hidden", "true");
+}
+
+function onModelsFilter() {
+  const q = dom.modelsSearch ? dom.modelsSearch.value : "";
+  const toolsOnly = dom.modelsToolsOnly ? dom.modelsToolsOnly.checked : false;
+  const freeOnly = dom.modelsFreeOnly ? dom.modelsFreeOnly.checked : false;
+  renderModelsList(q, toolsOnly, freeOnly);
 }
 
 /* --- Send message --- */
@@ -49,6 +242,20 @@ async function send() {
   state.t0 = performance.now();
   if (dom.latency) dom.latency.textContent = "thinking...";
 
+  /* Elapsed timer in status bar */
+  if (state._timerInterval) clearInterval(state._timerInterval);
+  if (dom.statusBar) {
+    dom.statusBar.textContent = "Working for 0s...";
+    state._timerInterval = setInterval(() => {
+      const elapsed = Math.floor((performance.now() - state.t0) / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = elapsed % 60;
+      dom.statusBar.textContent = m > 0
+        ? `Working for ${m}m ${s}s...`
+        : `Working for ${s}s...`;
+    }, 1000);
+  }
+
   addRow("user", text || "(attachment)", { autoscroll: true });
   state.serverHistory.push({ role: "user", content: text || "" });
 
@@ -68,16 +275,11 @@ async function send() {
       renderAttachments();
     }
 
-    const inputModel = String((dom.modelInput && dom.modelInput.value) || "").trim();
-    const effectiveModel = inputModel || state.currentModel;
-    if (effectiveModel) {
-      state.modelDefault = effectiveModel;
-      persist("modelDefault", state.modelDefault);
-      if (state.currentModel !== effectiveModel) {
-        try {
-          state.ws.send(JSON.stringify({ type: "set_model", model: effectiveModel }));
-        } catch (_) { }
-      }
+    const effectiveModel = state.currentModel || state.modelDefault;
+    if (effectiveModel && state.currentModel !== effectiveModel) {
+      try {
+        state.ws.send(JSON.stringify({ type: "set_model", model: effectiveModel }));
+      } catch (_) { }
     }
 
     const payload = { type: "message", content: text, media };
@@ -92,28 +294,6 @@ async function send() {
       state.thinkingRow = null;
     }
     addRow("assistant", "Error sending message: " + String(e));
-  }
-}
-
-/* --- Model --- */
-
-function applyModel() {
-  if (!state.ws || state.ws.readyState !== 1) {
-    toastMsg("Not connected yet.");
-    return;
-  }
-
-  const v = String((dom.modelInput && dom.modelInput.value) || "").trim();
-  if (v) {
-    state.modelDefault = v;
-    persist("modelDefault", state.modelDefault);
-  }
-
-  try {
-    state.ws.send(JSON.stringify({ type: "set_model", model: v }));
-    toastMsg(v ? "Model set." : "Model cleared.");
-  } catch (_) {
-    toastMsg("Failed to set model.");
   }
 }
 
@@ -357,6 +537,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     closeSessionsModal();
     closeSettingsModal();
+    closeModelsModal();
   }
 });
 
@@ -378,13 +559,31 @@ if (dom.subagentSpawnBtn)
 if (dom.subagentRefreshBtn)
   dom.subagentRefreshBtn.addEventListener("click", requestSubagents);
 
-/* Model */
-if (dom.applyModelBtn) dom.applyModelBtn.addEventListener("click", applyModel);
-if (dom.modelInput)
-  dom.modelInput.addEventListener("keydown", (e) => {
+/* Model picker */
+if (dom.modelTrigger) dom.modelTrigger.addEventListener("click", openModelsModal);
+if (dom.modelsClose) dom.modelsClose.addEventListener("click", closeModelsModal);
+if (dom.modelsModal)
+  dom.modelsModal.addEventListener("click", (e) => {
+    if (e.target === dom.modelsModal) closeModelsModal();
+  });
+if (dom.modelsSearch)
+  dom.modelsSearch.addEventListener("input", onModelsFilter);
+if (dom.modelsToolsOnly)
+  dom.modelsToolsOnly.addEventListener("change", onModelsFilter);
+if (dom.modelsFreeOnly)
+  dom.modelsFreeOnly.addEventListener("change", onModelsFilter);
+if (dom.modelsCustomApply)
+  dom.modelsCustomApply.addEventListener("click", () => {
+    const v = String(dom.modelsCustomInput && dom.modelsCustomInput.value || "").trim();
+    if (!v) { toastMsg("Enter a model ID."); return; }
+    selectModel(v);
+  });
+if (dom.modelsCustomInput)
+  dom.modelsCustomInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      applyModel();
+      const v = String(dom.modelsCustomInput.value || "").trim();
+      if (v) selectModel(v);
     }
   });
 
@@ -402,13 +601,11 @@ for (const b of Array.from(document.querySelectorAll(".chipbtn"))) {
 /* --- Init --- */
 
 if (dom.sessionKey) dom.sessionKey.textContent = state.sessionKey;
-if (dom.modelPill) dom.modelPill.textContent = "default";
-if (dom.modelInput) dom.modelInput.value = "";
+if (dom.modelPill) dom.modelPill.textContent = state.modelDefault || "default";
 if (dom.verbositySelect) dom.verbositySelect.value = state.verbosity || "normal";
 if (dom.restrictWorkspaceToggle)
   dom.restrictWorkspaceToggle.checked = !!state.restrictWorkspace;
 
-fillModelDatalist();
 autogrow();
 renderHistory([]);
 renderAttachments();

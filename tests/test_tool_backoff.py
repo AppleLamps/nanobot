@@ -116,6 +116,7 @@ async def test_tool_error_backoff_aborts_after_streak(tmp_path, monkeypatch) -> 
     assert out.content == (
         "I'm hitting repeated tool errors. "
         "Please rephrase or provide more specific inputs."
+        "\n\nLast tool error (always_error): Error: tool failed"
     )
 
 
@@ -155,6 +156,7 @@ async def test_tool_error_backoff_resets_on_success(tmp_path, monkeypatch) -> No
     assert out.content == (
         "I'm hitting repeated tool errors. "
         "Please rephrase or provide more specific inputs."
+        "\n\nLast tool error (toggle): Error: tool failed"
     )
 
 
@@ -191,6 +193,7 @@ async def test_system_message_tool_backoff_uses_system_wording(tmp_path, monkeyp
     assert out.content == (
         "Background task hit repeated tool errors. "
         "Please rephrase or provide more specific inputs."
+        "\n\nLast tool error (always_error): Error: tool failed"
     )
 
 
@@ -222,4 +225,5 @@ async def test_tool_error_backoff_counts_warnings(tmp_path, monkeypatch) -> None
     assert out.content == (
         "I'm hitting repeated tool errors. "
         "Please rephrase or provide more specific inputs."
+        "\n\nLast tool error (warn_tool): Warning: ambiguous input"
     )

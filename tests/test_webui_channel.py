@@ -37,6 +37,11 @@ async def test_webui_channel_receives_inbound_and_sends_outbound(tmp_path) -> No
             assert history["chat_id"] == "testchat"
             assert history["session_key"] == "webui:testchat"
 
+            # Then a settings payload.
+            settings = json.loads(await ws.recv())
+            assert settings["type"] == "settings"
+            assert settings["session_key"] == "webui:testchat"
+
             await ws.send(json.dumps({"type": "message", "content": "hello"}))
             inbound = await asyncio.wait_for(bus.consume_inbound(), timeout=2.0)
             assert inbound.channel == "webui"
@@ -83,6 +88,9 @@ async def test_webui_channel_auth_token_blocks_unauthorized_clients(tmp_path) ->
             # history comes next
             _history = json.loads(await ws.recv())
             assert _history["type"] == "history"
+            # settings comes next
+            _settings = json.loads(await ws.recv())
+            assert _settings["type"] == "settings"
     finally:
         await ch.stop()
         await asyncio.wait_for(task, timeout=2.0)

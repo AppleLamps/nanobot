@@ -67,6 +67,7 @@ class WebUIChannel(BaseChannel):
 
     _log_sink_id: int | None = None
     _log_buffer: "deque[str]" = deque(maxlen=2000)
+    _models_cache: bytes | None = None
 
     def __init__(self, config: WebUIConfig, bus: MessageBus, *, workspace: Path):
         super().__init__(config, bus)
@@ -144,6 +145,42 @@ class WebUIChannel(BaseChannel):
             text = text[-max_len:]
             text = "[truncated]\n" + text
         return text
+
+    @classmethod
+    def _get_models_json(cls) -> bytes:
+        """Return a slim JSON list of models from openrouter-models.json (cached)."""
+        if cls._models_cache is not None:
+            return cls._models_cache
+        models_path = Path(__file__).resolve().parent.parent / "providers" / "openrouter-models.json"
+        try:
+            raw = json.loads(models_path.read_text(encoding="utf-8"))
+        except Exception:
+            cls._models_cache = b"[]"
+            return cls._models_cache
+        items = raw.get("data") if isinstance(raw, dict) else raw
+        if not isinstance(items, list):
+            cls._models_cache = b"[]"
+            return cls._models_cache
+        slim = []
+        for m in items:
+            if not isinstance(m, dict) or not m.get("id"):
+                continue
+            pricing = m.get("pricing") or {}
+            top = m.get("top_provider") or {}
+            arch = m.get("architecture") or {}
+            params = m.get("supported_parameters") or []
+            slim.append({
+                "id": m["id"],
+                "name": m.get("name", m["id"]),
+                "ctx": m.get("context_length", 0),
+                "prompt": pricing.get("prompt", "0"),
+                "completion": pricing.get("completion", "0"),
+                "maxOut": top.get("max_completion_tokens", 0),
+                "tools": "tools" in params,
+                "vision": "image" in (arch.get("input_modalities") or []),
+            })
+        cls._models_cache = json.dumps(slim, separators=(",", ":")).encode("utf-8")
+        return cls._models_cache
 
     def _mime_for(self, path: str) -> str:
         if path.endswith(".html"):
@@ -243,6 +280,18 @@ class WebUIChannel(BaseChannel):
                 ("Content-Disposition", "attachment; filename=nanobot.log"),
             ]
             return _reply(200, headers, body)
+
+        if parsed.path == "/api/models":
+            body = self._get_models_json()
+            return _reply(
+                200,
+                [
+                    ("Content-Type", "application/json; charset=utf-8"),
+                    ("Content-Length", str(len(body))),
+                    ("Cache-Control", "max-age=3600"),
+                ],
+                body,
+            )
 
         route = parsed.path
         if route in ("", "/"):

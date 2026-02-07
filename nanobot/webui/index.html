@@ -23,11 +23,11 @@
             <svg viewBox="0 0 24 24" fill="none">
               <path
                 d="M6.2 16.7c1.2 1.6 3.1 2.7 5.3 2.7 3.7 0 6.8-3 6.8-6.8 0-2.6-1.5-4.9-3.7-6.0-.5-.2-1 .2-.9.7.1.5.2 1 .2 1.5 0 3.1-2.5 5.6-5.6 5.6-.8 0-1.6-.2-2.3-.5-.5-.2-1 .2-.9.7.2.7.6 1.4 1.1 2.1Z"
-                fill="rgba(251,247,241,.96)" />
-              <path d="M6.3 9.6c.7-1.3 2-2.3 3.6-2.7" stroke="rgba(251,247,241,.96)" stroke-width="1.6"
+                fill="rgba(255,255,255,0.9)" />
+              <path d="M6.3 9.6c.7-1.3 2-2.3 3.6-2.7" stroke="rgba(255,255,255,0.9)" stroke-width="1.6"
                 stroke-linecap="round" />
               <path d="M10.2 6.4c.4-.3 1-.5 1.6-.5 1.6 0 2.8 1.3 2.8 2.8 0 .4-.1.9-.3 1.2"
-                stroke="rgba(251,247,241,.96)" stroke-width="1.6" stroke-linecap="round" />
+                stroke="rgba(255,255,255,0.9)" stroke-width="1.6" stroke-linecap="round" />
             </svg>
           </div>
           <div class="title">
@@ -81,8 +81,8 @@
         <div class="feed" id="feed" aria-live="polite">
           <div class="empty" id="empty" aria-hidden="true">
             <div>
-              <div class="kicker">Warm paper, sharp ink</div>
-              <div class="headline">Ask nanobot anything.</div>
+              <div class="kicker">AI-powered assistant</div>
+              <div class="headline">How can I help?</div>
               <div class="copy">
                 Tip: pick a model below the input if you want to switch styles or speed.
               </div>
@@ -111,7 +111,7 @@
                   d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
-            <textarea id="input" placeholder="Ask nanobot..." rows="1"></textarea>
+            <textarea id="input" placeholder="Ask a question or describe a task..." rows="1"></textarea>
             <button class="send-btn" id="send" type="button" title="Send message">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
                 stroke-linecap="round" stroke-linejoin="round">
@@ -126,14 +126,18 @@
               <span class="kbd">Shift</span>+<span class="kbd">Enter</span> newline
             </div>
             <div class="model-row">
-              <input id="model" list="models" placeholder="Model: default (or type custom)" autocomplete="off"
-                spellcheck="false" />
-              <datalist id="models"></datalist>
-              <button class="btn-sm" id="apply-model" title="Set model">Set</button>
+              <button class="model-trigger" id="model-trigger" type="button" title="Choose model">
+                <span id="model-pill">default</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
             </div>
             <div id="latency" class="latency"></div>
           </div>
         </footer>
+        <div class="status-bar" id="status-bar" aria-live="polite"></div>
       </div>
 
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
@@ -204,6 +208,24 @@
             </div>
             <div class="settings-help">Spawn runs a background worker and reports back here.</div>
             <div class="subagent-list" id="subagent-list" aria-live="polite"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal" id="models-modal" aria-hidden="true">
+        <div class="modal-card modal-card--wide" role="dialog" aria-modal="true" aria-label="Choose model">
+          <div class="modal-head">
+            <div class="modal-title">Choose model</div>
+            <button class="iconbtn" id="models-close" type="button">Close</button>
+          </div>
+          <div class="models-toolbar">
+            <input id="models-search" type="text" placeholder="Search models..." autocomplete="off" spellcheck="false" />
+            <label class="models-toggle"><input id="models-tools-only" type="checkbox" checked /> Tools</label>
+            <label class="models-toggle"><input id="models-free-only" type="checkbox" /> Free</label>
+          </div>
+          <div class="modal-body" id="models-body"></div>
+          <div class="models-custom">
+            <input id="models-custom-input" type="text" placeholder="Or type a custom model ID..." autocomplete="off" spellcheck="false" />
+            <button class="btn-sm" id="models-custom-apply" type="button">Use</button>
           </div>
         </div>
       </div>

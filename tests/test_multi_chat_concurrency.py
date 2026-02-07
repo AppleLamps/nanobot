@@ -135,9 +135,18 @@ async def test_message_tool_context_is_request_scoped(tmp_path, monkeypatch, con
         await loop._process_message(msg_b)
 
     # Two outbound messages from the message tool.
-    m1 = await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
-    m2 = await asyncio.wait_for(bus.consume_outbound(), timeout=2.0)
-    got = {(m1.channel, m1.chat_id, m1.content), (m2.channel, m2.chat_id, m2.content)}
+    # Filter out status messages emitted by _emit_status (metadata.type == "status").
+    collected: list[tuple[str, str, str]] = []
+    deadline = asyncio.get_event_loop().time() + 4.0
+    while len(collected) < 2:
+        remaining = deadline - asyncio.get_event_loop().time()
+        if remaining <= 0:
+            break
+        m = await asyncio.wait_for(bus.consume_outbound(), timeout=remaining)
+        if isinstance(m.metadata, dict) and m.metadata.get("type") == "status":
+            continue
+        collected.append((m.channel, m.chat_id, m.content))
+    got = set(collected)
     assert got == {
         ("cli", "cA", "hello-A"),
         ("cli", "cB", "hello-B"),

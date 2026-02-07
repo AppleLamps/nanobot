@@ -225,6 +225,37 @@ export function addRow(role, text, opts) {
 
   wrap.appendChild(meta);
   wrap.appendChild(bubble);
+
+  if (role === "assistant") {
+    const feedback = document.createElement("div");
+    feedback.className = "feedback";
+
+    const thumbUp = document.createElement("button");
+    thumbUp.className = "feedback-btn";
+    thumbUp.type = "button";
+    thumbUp.title = "Good response";
+    thumbUp.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/></svg>';
+
+    const thumbDown = document.createElement("button");
+    thumbDown.className = "feedback-btn";
+    thumbDown.type = "button";
+    thumbDown.title = "Poor response";
+    thumbDown.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"/></svg>';
+
+    thumbUp.addEventListener("click", () => {
+      thumbUp.classList.toggle("active");
+      thumbDown.classList.remove("active");
+    });
+    thumbDown.addEventListener("click", () => {
+      thumbDown.classList.toggle("active");
+      thumbUp.classList.remove("active");
+    });
+
+    feedback.appendChild(thumbUp);
+    feedback.appendChild(thumbDown);
+    wrap.appendChild(feedback);
+  }
+
   row.appendChild(wrap);
 
   dom.rows.appendChild(row);

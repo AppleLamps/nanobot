@@ -136,7 +136,6 @@ export function connect() {
         persist("modelDefault", state.modelDefault);
       }
       if (dom.modelPill) dom.modelPill.textContent = state.currentModel || "default";
-      if (dom.modelInput) dom.modelInput.value = state.currentModel || state.modelDefault || "";
       if (dom.verbositySelect) dom.verbositySelect.value = state.verbosity || "normal";
       if (dom.restrictWorkspaceToggle)
         dom.restrictWorkspaceToggle.checked = !!state.restrictWorkspace;
@@ -228,6 +227,12 @@ export function connect() {
         state.thinkingRow = null;
       }
 
+      /* Stop elapsed timer */
+      if (state._timerInterval) {
+        clearInterval(state._timerInterval);
+        state._timerInterval = null;
+      }
+
       const c = data.content || "";
       addRow("assistant", c);
       state.serverHistory.push({ role: "assistant", content: c });
@@ -240,6 +245,19 @@ export function connect() {
       const dt = performance.now() - state.t0;
       if (dom.latency)
         dom.latency.textContent = dt ? `reply in ${(dt / 1000).toFixed(2)}s` : "";
+
+      /* Show final elapsed time in status bar */
+      if (dom.statusBar && dt) {
+        const elapsed = Math.floor(dt / 1000);
+        const m = Math.floor(elapsed / 60);
+        const s = elapsed % 60;
+        dom.statusBar.textContent = m > 0
+          ? `Worked for ${m}m ${s}s`
+          : `Worked for ${s}s`;
+        setTimeout(() => {
+          if (dom.statusBar) dom.statusBar.textContent = "";
+        }, 10000);
+      }
       return;
     }
 
@@ -248,6 +266,12 @@ export function connect() {
         state.thinkingRow.remove();
         state.thinkingRow = null;
       }
+      /* Stop elapsed timer */
+      if (state._timerInterval) {
+        clearInterval(state._timerInterval);
+        state._timerInterval = null;
+      }
+      if (dom.statusBar) dom.statusBar.textContent = "";
       state.inflight = false;
       if (dom.sendBtn) dom.sendBtn.disabled = false;
       if (dom.input) dom.input.disabled = false;
