@@ -14,7 +14,7 @@
 
 🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [Clawdbot](https://github.com/openclaw/openclaw)
 
-⚡️ Delivers core agent functionality in about **~6,000** lines of Python (excluding tests) — **~99% smaller** than Clawdbot's 430k+ lines.
+⚡️ Delivers core agent functionality in about **~8,000** lines of Python (excluding tests) — **~98% smaller** than Clawdbot's 430k+ lines.
 
 ## 📢 News
 
@@ -22,13 +22,15 @@
 
 ## Key Features of nanobot
 
-🪶 **Ultra-Lightweight**: About ~6,000 lines of Python (excluding tests) — ~99% smaller than Clawdbot - core functionality.
+🪶 **Ultra-Lightweight**: About ~8,000 lines of Python (excluding tests) — ~98% smaller than Clawdbot - core functionality.
 
 🔬 **Research-Ready**: Clean, readable code that's easy to understand, modify, and extend for research.
 
 ⚡️ **Lightning Fast**: Minimal footprint means faster startup, lower resource usage, and quicker iterations.
 
 💎 **Easy-to-Use**: One command to onboard and you're ready to go.
+
+🔀 **Subagent Delegation**: Spawn background subagents for long-running tasks while the main agent stays responsive.
 
 ## 🏗️ Architecture
 
@@ -97,7 +99,7 @@ pip install nanobot-ai
 
 > [!TIP]
 > Run `nanobot onboard` to create `~/.nanobot/config.json` (default profile). In an interactive terminal, it will also prompt you for API keys (you can skip and edit the JSON later). Use `nanobot onboard --no-prompt` for non-interactive runs.
-> Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
+> Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search) · [Firecrawl](https://firecrawl.dev/) (optional, for web scraping)
 > You can also change the model to any provider/model you have access to.
 >
 > Profiles: use `nanobot --profile jason ...` (or `NANOBOT_PROFILE=jason`) to use `~/.nanobot_jason/` instead of `~/.nanobot/`.
@@ -128,6 +130,9 @@ nanobot onboard
     "web": {
       "search": {
         "apiKey": "BSA-xxx"
+      },
+      "firecrawl": {
+        "apiKey": "fc-xxx"
       }
     }
   }
@@ -361,6 +366,7 @@ Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROF
 | `groq` | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
 | `zhipu` | LLM (Zhipu/GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
+| `vllm` | Local / OpenAI-compatible endpoint | — (set `apiBase` instead) |
 
 ### Agents
 
@@ -410,6 +416,7 @@ nanobot persists chat history as JSONL under `~/.nanobot/sessions/` (or `~/.nano
 |-------|---------|---------|
 | `tools.web.search.apiKey` | Brave Search API key | `""` |
 | `tools.web.search.maxResults` | Max search results | `5` |
+| `tools.web.firecrawl.apiKey` | Firecrawl API key (enables `firecrawl_scrape` tool) | `""` |
 | `tools.exec.timeout` | Shell command timeout (seconds) | `60` |
 | `tools.exec.restrictToWorkspace` | Block commands accessing paths outside workspace | `true` |
 | `tools.allowedTools` | Optional allowlist of tool names (e.g. `["read_file", "web_search"]`) | `null` (all tools) |
@@ -457,6 +464,9 @@ nanobot persists chat history as JSONL under `~/.nanobot/sessions/` (or `~/.nano
     "web": {
       "search": {
         "apiKey": "BSA..."
+      },
+      "firecrawl": {
+        "apiKey": "fc-..."
       }
     },
     "exec": {
@@ -648,6 +658,7 @@ Skills are modular packages that extend nanobot's capabilities with specialized 
 | `summarize` | Summarize URLs, files, and YouTube videos |
 | `tmux` | Remote-control tmux sessions |
 | `skill-creator` | Create and package new skills |
+| `website-maintainer` | Manage and maintain a personal website/blog |
 
 ### Using Skills
 
@@ -688,6 +699,15 @@ my-skill/
 └── assets/           # Optional: templates, images, etc.
 ```
 
+## 🔀 Subagents
+
+nanobot can **spawn background subagents** to handle long-running tasks while the main agent stays responsive. This is the primary execution strategy — the main agent delegates work via `spawn`, responds immediately, and the subagent reports back when done.
+
+- **`spawn(task, label?)`** — Delegate a task to a background subagent with full tool access
+- **`subagent_control(action, label?)`** — List or cancel running subagents
+
+Subagents run asynchronously with the same tools as the main agent (file ops, shell, web, etc.) and announce their results back to the conversation when complete.
+
 ## 🐳 Docker
 
 > [!TIP]
@@ -726,13 +746,15 @@ nanobot/
 │   ├── subagent.py #    Background task execution
 │   └── tools/      #    Built-in tools (incl. spawn)
 ├── skills/         # 🎯 Bundled skills (github, weather, tmux...)
-├── channels/       # 📱 WhatsApp integration
+├── channels/       # 📱 Channel integrations (Telegram, WhatsApp, Feishu, WebUI)
+├── webui/          # 🌐 Built-in browser chat UI (HTML/CSS/JS)
 ├── bus/            # 🚌 Message routing
 ├── cron/           # ⏰ Scheduled tasks
 ├── heartbeat/      # 💓 Proactive wake-up
 ├── providers/      # 🤖 LLM providers (OpenRouter, etc.)
 ├── session/        # 💬 Conversation sessions
 ├── config/         # ⚙️ Configuration
+├── utils/          # 🔧 Shared helpers
 └── cli/            # 🖥️ Commands
 ```
 
