@@ -371,6 +371,7 @@ Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROF
 | `workspace` | Workspace path | `~/.nanobot/workspace` (or `~/.nanobot_<profile>/workspace`) |
 | `provider` | Explicit provider override | `""` |
 | `model` | LLM model id | `openai/gpt-oss-120b:exacto` |
+| `fallbackModels` | Fallback models if primary fails | `[]` |
 | `maxTokens` | Max tokens per response | `8192` |
 | `temperature` | Sampling temperature | `0.7` |
 | `maxToolIterations` | Max tool loop iterations per message | `20` |
@@ -401,6 +402,18 @@ nanobot indexes memory into `memory/memory.sqlite3` (SQLite with FTS when availa
 
 nanobot persists chat history as JSONL under `~/.nanobot/sessions/` (or `~/.nanobot_<profile>/sessions/`). Session writes are locked and atomic, so concurrent chats (or multiple processes) don't corrupt the history.
 
+### Tools
+
+`tools` controls tool behavior and access.
+
+| Field | Purpose | Default |
+|-------|---------|---------|
+| `tools.web.search.apiKey` | Brave Search API key | `""` |
+| `tools.web.search.maxResults` | Max search results | `5` |
+| `tools.exec.timeout` | Shell command timeout (seconds) | `60` |
+| `tools.exec.restrictToWorkspace` | Block commands accessing paths outside workspace | `true` |
+| `tools.allowedTools` | Optional allowlist of tool names (e.g. `["read_file", "web_search"]`) | `null` (all tools) |
+
 <details>
 <summary><b>Full config example</b></summary>
 
@@ -409,6 +422,7 @@ nanobot persists chat history as JSONL under `~/.nanobot/sessions/` (or `~/.nano
   "agents": {
     "defaults": {
       "model": "openai/gpt-oss-120b:exacto",
+      "fallbackModels": ["anthropic/claude-sonnet-4-20250514"],
       "memoryScope": "session",
       "maxConcurrentMessages": 4
     }
@@ -444,12 +458,114 @@ nanobot persists chat history as JSONL under `~/.nanobot/sessions/` (or `~/.nano
       "search": {
         "apiKey": "BSA..."
       }
+    },
+    "exec": {
+      "timeout": 60,
+      "restrictToWorkspace": true
     }
   }
 }
 ```
 
 </details>
+
+## 🤖 Multiple Agents (Profiles)
+
+Profiles let you run **multiple independent agents**, each with its own config, workspace, memory, and sessions. This is useful for separating personal vs work assistants, running different models, or giving each agent a different personality.
+
+**How it works:** `--profile <name>` (or `NANOBOT_PROFILE=<name>`) switches the data directory from `~/.nanobot/` to `~/.nanobot_<name>/`.
+
+### Quick Start
+
+```bash
+# Create a "work" agent with its own config
+nanobot --profile work onboard
+
+# Create a "personal" agent
+nanobot --profile personal onboard
+```
+
+### Configure Each Agent Independently
+
+Each profile gets its own `config.json`, so you can use different models, providers, or settings:
+
+```bash
+# Edit the work agent's config
+# ~/.nanobot_work/config.json
+```
+
+```json
+{
+  "providers": {
+    "anthropic": { "apiKey": "sk-ant-xxx" }
+  },
+  "agents": {
+    "defaults": {
+      "model": "anthropic/claude-sonnet-4-20250514",
+      "memoryScope": "session"
+    }
+  }
+}
+```
+
+```bash
+# Edit the personal agent's config
+# ~/.nanobot_personal/config.json
+```
+
+```json
+{
+  "providers": {
+    "openrouter": { "apiKey": "sk-or-v1-xxx" }
+  },
+  "agents": {
+    "defaults": {
+      "model": "openai/gpt-4o",
+      "memoryScope": "user"
+    }
+  }
+}
+```
+
+### Use Each Agent
+
+```bash
+# Chat with the work agent
+nanobot --profile work agent -m "Summarize yesterday's PRs"
+
+# Chat with the personal agent
+nanobot --profile personal agent -m "What's on my calendar today?"
+
+# Run the work agent as a gateway (Telegram, WhatsApp, etc.)
+nanobot --profile work gateway
+
+# Check status of any profile
+nanobot --profile personal status
+```
+
+### Using Environment Variables
+
+```bash
+# Set profile via environment variable (useful in scripts, cron, Docker)
+export NANOBOT_PROFILE=work
+nanobot agent -m "Hello from the work agent!"
+
+# Or override the entire data directory
+export NANOBOT_DATA_DIR=/path/to/custom/data
+nanobot agent -m "Using a custom data directory"
+```
+
+### What Each Profile Gets
+
+| Resource | Path |
+|----------|------|
+| Config | `~/.nanobot_<profile>/config.json` |
+| Workspace | `~/.nanobot_<profile>/workspace/` |
+| Sessions | `~/.nanobot_<profile>/sessions/` |
+| Memory | `~/.nanobot_<profile>/workspace/memory/` |
+| Skills | `~/.nanobot_<profile>/workspace/skills/` |
+
+Each profile is fully isolated — different models, different memories, different personalities. The default profile (no `--profile` flag) uses `~/.nanobot/`.
 
 ## CLI Reference
 
@@ -458,24 +574,60 @@ nanobot persists chat history as JSONL under `~/.nanobot/sessions/` (or `~/.nano
 | `nanobot onboard` | Initialize config & workspace |
 | `nanobot agent -m "..."` | Chat with the agent |
 | `nanobot agent` | Interactive chat mode |
+| `nanobot agent -m "..." --media img.png` | Chat with image/PDF attachments |
+| `nanobot agent --session my-project` | Chat in a named session |
 | `nanobot gateway` | Start the gateway |
+| `nanobot gateway --webui` | Start gateway with Web UI enabled |
+| `nanobot gateway --port 8080` | Start gateway on a custom port |
 | `nanobot status` | Show status |
 | `nanobot channels login` | Link WhatsApp (scan QR) |
 | `nanobot channels status` | Show channel status |
 | `nanobot skills list` | List all available skills |
 | `nanobot skills init <name>` | Create a new skill scaffold |
 | `nanobot skills install <file>` | Install a .skill package |
+| `nanobot cron list` | List scheduled jobs |
+| `nanobot cron add ...` | Add a scheduled job |
+| `nanobot cron remove <id>` | Remove a scheduled job |
+| `nanobot cron enable <id>` | Enable/disable a job (`--disable`) |
+| `nanobot cron run <id>` | Manually trigger a job |
+| `nanobot --profile <name> ...` | Use a named profile (separate config & data) |
+| `nanobot --version` | Show version |
+
+### Global Flags
+
+| Flag | Env Variable | Description |
+|------|-------------|-------------|
+| `--profile <name>` | `NANOBOT_PROFILE` | Use `~/.nanobot_<name>/` for all data |
+| `--data-dir <path>` | `NANOBOT_DATA_DIR` | Override the data directory entirely |
+| `--version` / `-v` | — | Print version and exit |
 
 <details>
 <summary><b>Scheduled Tasks (Cron)</b></summary>
 
 ```bash
-# Add a job
+# Add a job (cron expression)
 nanobot cron add --name "daily" --message "Good morning!" --cron "0 9 * * *"
+
+# Add a job (interval in seconds)
 nanobot cron add --name "hourly" --message "Check status" --every 3600
+
+# Add a one-time job
+nanobot cron add --name "reminder" --message "Call dentist" --at "2026-03-01T14:00:00"
+
+# Deliver the response to a specific channel
+nanobot cron add --name "report" --message "Daily summary" --cron "0 18 * * *" \
+  --deliver --to "123456789" --channel "telegram"
 
 # List jobs
 nanobot cron list
+nanobot cron list --all  # include disabled jobs
+
+# Enable/disable a job
+nanobot cron enable <job_id>
+nanobot cron enable <job_id> --disable
+
+# Manually run a job
+nanobot cron run <job_id>
 
 # Remove a job
 nanobot cron remove <job_id>

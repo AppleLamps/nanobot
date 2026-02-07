@@ -4,7 +4,7 @@ import asyncio
 import os
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
@@ -91,9 +91,9 @@ class ExecTool(Tool):
         }
     
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
-        base_root = self.working_dir or os.getcwd()
-        cwd = working_dir or self.working_dir or os.getcwd()
-        guard_error = self._guard_command(command, cwd)
+        base_root = self._normalize_path(self.working_dir or os.getcwd())
+        cwd = self._normalize_path(working_dir or self.working_dir or os.getcwd())
+        guard_error = self._guard_command(command, cwd, base_root=base_root)
         if guard_error:
             return guard_error
 
@@ -155,6 +155,32 @@ class ExecTool(Tool):
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
+    def _normalize_path(self, raw: str) -> str:
+        """
+        Normalize common Windows absolute paths when running on POSIX (e.g. WSL).
+
+        This prevents false "outside workspace" blocks and broken cwd handling when
+        configs contain Windows paths but the process is running in a POSIX shell.
+        """
+        s = (raw or "").strip()
+        if not s:
+            return raw
+
+        # Map "C:\Users\..." -> "/mnt/c/Users/..." when "/mnt/<drive>" exists.
+        if os.name != "nt" and re.match(r"^[A-Za-z]:\\\\", s):
+            try:
+                wp = PureWindowsPath(s)
+                drive = (wp.drive or "")[:1].lower()
+                if drive and (Path("/mnt") / drive).exists():
+                    mapped = Path("/mnt") / drive
+                    for part in wp.parts[1:]:
+                        mapped = mapped / part
+                    return str(mapped)
+            except Exception:
+                return raw
+
+        return raw
+
     def _build_subprocess_env(self) -> dict[str, str]:
         """
         Build a subprocess environment with common secret keys removed.
@@ -185,7 +211,7 @@ class ExecTool(Tool):
                 env.pop(k, None)
         return env
 
-    def _guard_command(self, command: str, cwd: str) -> str | None:
+    def _guard_command(self, command: str, cwd: str, *, base_root: str | None = None) -> str | None:
         """
         Best-effort safety guard for potentially destructive commands.
 
@@ -209,13 +235,40 @@ class ExecTool(Tool):
             # This is intentionally conservative: users can still use subdirs.
             if re.search(r"\b(cd|chdir|pushd|set-location|sl)\s+\.\.(\s|$)", lower):
                 return "Error: Command blocked by safety guard (directory escape detected)"
-            if re.search(r"\b(cd|chdir|pushd|set-location|sl)\s+([a-z]:\\|\\\\|/)", lower):
-                return "Error: Command blocked by safety guard (absolute directory change detected)"
 
             if "..\\" in cmd or "../" in cmd:
                 return "Error: Command blocked by safety guard (path traversal detected)"
 
-            cwd_path = Path(cwd).resolve()
+            cwd_path = Path(self._normalize_path(cwd)).expanduser().resolve()
+            root_path = Path(self._normalize_path(base_root or cwd)).expanduser().resolve()
+
+            # Allow absolute `cd`/`pushd` only when it stays within the configured root.
+            cd_re = re.compile(
+                r"\b(?:cd|chdir|pushd|set-location|sl)\s+(?:\"([^\"]+)\"|'([^']+)'|([^\s;&|]+))",
+                re.IGNORECASE,
+            )
+            for m in cd_re.finditer(cmd):
+                target = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+                if not target:
+                    continue
+
+                # Treat "~" as absolute for guard purposes.
+                looks_abs = (
+                    target.startswith("~")
+                    or target.startswith("/")
+                    or target.startswith("\\\\")
+                    or re.match(r"^[A-Za-z]:\\\\", target)
+                )
+                if not looks_abs:
+                    continue
+
+                try:
+                    target_path = Path(self._normalize_path(target)).expanduser().resolve()
+                except Exception:
+                    return "Error: Command blocked by safety guard (invalid directory change detected)"
+
+                if root_path not in target_path.parents and target_path != root_path:
+                    return "Error: Command blocked by safety guard (directory change outside workspace)"
 
             # Ignore URL tokens when scanning for absolute paths (e.g., curl https://...).
             cmd_no_urls = re.sub(r"https?://[^\s\"']+", "", cmd)
@@ -225,10 +278,11 @@ class ExecTool(Tool):
 
             for raw in win_paths + posix_paths:
                 try:
-                    p = Path(raw).resolve()
+                    p = Path(self._normalize_path(raw)).expanduser().resolve()
                 except Exception:
                     continue
-                if cwd_path not in p.parents and p != cwd_path:
-                    return "Error: Command blocked by safety guard (path outside working dir)"
+                # Permit paths anywhere under the configured root (workspace).
+                if root_path not in p.parents and p != root_path:
+                    return "Error: Command blocked by safety guard (path outside workspace)"
 
         return None

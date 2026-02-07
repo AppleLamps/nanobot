@@ -1,15 +1,43 @@
 """Configuration schema using Pydantic."""
 
+import os
+import re
 from pathlib import Path
 import warnings
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
+from pathlib import PureWindowsPath
 
 
 def _default_workspace() -> str:
     from nanobot.utils.helpers import get_data_path
     return str(get_data_path() / "workspace")
+
+def _normalize_path_for_platform(raw: str) -> str:
+    """
+    Normalize Windows absolute paths when running on POSIX (e.g. WSL).
+
+    This allows configs that contain "C:\\Users\\..." to work when nanobot is
+    launched from a POSIX environment that can access Windows mounts at /mnt/<drive>.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return raw
+
+    if os.name != "nt" and re.match(r"^[A-Za-z]:\\\\", s):
+        try:
+            wp = PureWindowsPath(s)
+            drive = (wp.drive or "")[:1].lower()
+            if drive and (Path("/mnt") / drive).exists():
+                mapped = Path("/mnt") / drive
+                for part in wp.parts[1:]:
+                    mapped = mapped / part
+                return str(mapped)
+        except Exception:
+            return raw
+
+    return raw
 
 
 class WhatsAppConfig(BaseModel):
@@ -212,7 +240,8 @@ class Config(BaseSettings):
     @property
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
-        return Path(self.agents.defaults.workspace).expanduser()
+        raw = _normalize_path_for_platform(self.agents.defaults.workspace)
+        return Path(raw).expanduser()
     
     def get_api_key(self) -> str | None:
         """Get the API key for the selected provider (see _select_provider())."""

@@ -8,7 +8,12 @@ This file stores important information that should persist across sessions.
 
 ## Preferences
 
-(User preferences learned over time)
+- Always assume the user is on Windows.
+- Windows version: Windows 7.
+- Command style: avoid `&&`; prefer `;` to chain commands in PowerShell.
+- PowerShell pitfalls to avoid: don't use Unix-only flags like `-p` on `mkdir`; avoid `rm -rf`; avoid `touch`; prefer PowerShell cmdlets (`New-Item`, `Remove-Item`, `Set-Location`) when needed.
+- Timezone: use the user's current timezone per session; ask if not provided.
+- Working hours: do not assume; ask per user or per session as needed.
 
 ## Project Context
 

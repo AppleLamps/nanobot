@@ -439,6 +439,7 @@ class AgentLoop:
         iteration = 0
         final_content: str | None = None
         tool_error_streak = 0
+        last_tool_error: tuple[str, str] | None = None
         last_status_ts = 0.0
         nudged_for_response = False
 
@@ -507,11 +508,21 @@ class AgentLoop:
                     if self.tool_error_backoff > 0:
                         if self._is_tool_error(result):
                             tool_error_streak += 1
+                            last_tool_error = (tool_call.name, result)
                         else:
                             tool_error_streak = 0
 
                         if tool_error_streak >= self.tool_error_backoff:
-                            final_content = tool_error_backoff_message
+                            if last_tool_error and last_tool_error[1].strip():
+                                # Include a short hint so users can fix env/path issues quickly.
+                                # Avoid dumping full command output to keep chat clean.
+                                tool_name, raw = last_tool_error
+                                hint = " ".join(raw.strip().split())
+                                if len(hint) > 240:
+                                    hint = hint[:240] + "..."
+                                final_content = f"{tool_error_backoff_message}\n\nLast tool error ({tool_name}): {hint}"
+                            else:
+                                final_content = tool_error_backoff_message
                             abort_loop = True
                             break
 
