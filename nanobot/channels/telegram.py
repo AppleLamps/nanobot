@@ -261,10 +261,11 @@ class TelegramChannel(BaseChannel):
                 
                 # Save to workspace/media/
                 from pathlib import Path
+                from nanobot.utils.helpers import get_data_path
                 if self.workspace is not None:
                     media_dir = Path(self.workspace) / "media"
                 else:
-                    media_dir = Path.home() / ".nanobot" / "media"
+                    media_dir = get_data_path() / "media"
                 media_dir.mkdir(parents=True, exist_ok=True)
                 
                 file_path = media_dir / f"{media_file.file_id[:16]}{ext}"

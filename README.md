@@ -96,9 +96,11 @@ pip install nanobot-ai
 ## 🚀 Quick Start
 
 > [!TIP]
-> Run `nanobot onboard` to create `~/.nanobot/config.json`. In an interactive terminal, it will also prompt you for API keys (you can skip and edit the JSON later). Use `nanobot onboard --no-prompt` for non-interactive runs.
+> Run `nanobot onboard` to create `~/.nanobot/config.json` (default profile). In an interactive terminal, it will also prompt you for API keys (you can skip and edit the JSON later). Use `nanobot onboard --no-prompt` for non-interactive runs.
 > Get API keys: [OpenRouter](https://openrouter.ai/keys) (LLM) · [Brave Search](https://brave.com/search/api/) (optional, for web search)
 > You can also change the model to any provider/model you have access to.
+>
+> Profiles: use `nanobot --profile jason ...` (or `NANOBOT_PROFILE=jason`) to use `~/.nanobot_jason/` instead of `~/.nanobot/`.
 
 **1. Initialize**
 
@@ -106,7 +108,7 @@ pip install nanobot-ai
 nanobot onboard
 ```
 
-**2. Configure** (`~/.nanobot/config.json`)
+**2. Configure** (default: `~/.nanobot/config.json`)
 
 ```json
 {
@@ -344,7 +346,7 @@ nanobot gateway
 
 ## ⚙️ Configuration
 
-Config file: `~/.nanobot/config.json`
+Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROFILE` or `--data-dir` / `NANOBOT_DATA_DIR` to change this)
 
 ### Providers
 
@@ -366,7 +368,7 @@ Config file: `~/.nanobot/config.json`
 
 | Field | Purpose | Default |
 |------|---------|---------|
-| `workspace` | Workspace path | `~/.nanobot/workspace` |
+| `workspace` | Workspace path | `~/.nanobot/workspace` (or `~/.nanobot_<profile>/workspace`) |
 | `provider` | Explicit provider override | `""` |
 | `model` | LLM model id | `openai/gpt-oss-120b:exacto` |
 | `maxTokens` | Max tokens per response | `8192` |
@@ -397,7 +399,7 @@ nanobot indexes memory into `memory/memory.sqlite3` (SQLite with FTS when availa
 
 ### Sessions
 
-nanobot persists chat history as JSONL under `~/.nanobot/sessions/`. Session writes are locked and atomic, so concurrent chats (or multiple processes) don't corrupt the history.
+nanobot persists chat history as JSONL under `~/.nanobot/sessions/` (or `~/.nanobot_<profile>/sessions/`). Session writes are locked and atomic, so concurrent chats (or multiple processes) don't corrupt the history.
 
 <details>
 <summary><b>Full config example</b></summary>
@@ -537,7 +539,7 @@ my-skill/
 ## 🐳 Docker
 
 > [!TIP]
-> The `-v ~/.nanobot:/root/.nanobot` flag mounts your local config directory into the container, so your config and workspace persist across container restarts.
+> The `-v ~/.nanobot:/root/.nanobot` flag mounts your local config directory into the container, so your config and workspace persist across container restarts. If you're using a profile, mount `~/.nanobot_<profile>` instead.
 
 Build and run nanobot in a container:
 

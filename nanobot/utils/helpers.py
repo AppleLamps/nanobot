@@ -1,5 +1,6 @@
 """Utility functions for nanobot."""
 
+import os
 from pathlib import Path
 from datetime import datetime
 
@@ -11,8 +12,27 @@ def ensure_dir(path: Path) -> Path:
 
 
 def get_data_path() -> Path:
-    """Get the nanobot data directory (~/.nanobot)."""
-    return ensure_dir(Path.home() / ".nanobot")
+    """
+    Get the nanobot data directory.
+
+    Resolution order:
+    - NANOBOT_DATA_DIR: absolute override (expanded)
+    - NANOBOT_PROFILE: uses ~/.nanobot_<profile> (or ~/.nanobot for empty/default)
+    - default: ~/.nanobot
+    """
+    data_dir = (os.getenv("NANOBOT_DATA_DIR") or "").strip()
+    if data_dir:
+        return ensure_dir(Path(data_dir).expanduser())
+
+    profile = (os.getenv("NANOBOT_PROFILE") or "").strip()
+    if profile and profile.lower() not in {"default", "main"}:
+        # Reuse our "safe filename" rules for a predictable folder name.
+        profile_safe = "_".join(safe_filename(profile).split())
+        dirname = f".nanobot_{profile_safe}" if profile_safe else ".nanobot"
+    else:
+        dirname = ".nanobot"
+
+    return ensure_dir(Path.home() / dirname)
 
 
 def get_workspace_path(workspace: str | None = None) -> Path:
@@ -20,7 +40,7 @@ def get_workspace_path(workspace: str | None = None) -> Path:
     Get the workspace path.
     
     Args:
-        workspace: Optional workspace path. Defaults to ~/.nanobot/workspace.
+        workspace: Optional workspace path. Defaults to <data-dir>/workspace.
     
     Returns:
         Expanded and ensured workspace path.
@@ -28,7 +48,7 @@ def get_workspace_path(workspace: str | None = None) -> Path:
     if workspace:
         path = Path(workspace).expanduser()
     else:
-        path = Path.home() / ".nanobot" / "workspace"
+        path = get_data_path() / "workspace"
     return ensure_dir(path)
 
 

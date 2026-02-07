@@ -7,6 +7,11 @@ from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
 
 
+def _default_workspace() -> str:
+    from nanobot.utils.helpers import get_data_path
+    return str(get_data_path() / "workspace")
+
+
 class WhatsAppConfig(BaseModel):
     """WhatsApp channel configuration."""
     enabled: bool = False
@@ -56,7 +61,7 @@ class ChannelsConfig(BaseModel):
 
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
-    workspace: str = "~/.nanobot/workspace"
+    workspace: str = Field(default_factory=_default_workspace)
     provider: str = ""
     model: str = "openai/gpt-oss-120b:exacto"
     fallback_models: list[str] = Field(default_factory=list)

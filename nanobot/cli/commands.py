@@ -1,6 +1,7 @@
 """CLI commands for nanobot."""
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -52,8 +53,25 @@ def main(
     version: bool = typer.Option(
         None, "--version", "-v", callback=version_callback, is_eager=True
     ),
+    profile: str | None = typer.Option(
+        None,
+        "--profile",
+        envvar="NANOBOT_PROFILE",
+        help='Profile name (uses "~/.nanobot_<profile>" for config/sessions/workspace).',
+    ),
+    data_dir: str | None = typer.Option(
+        None,
+        "--data-dir",
+        envvar="NANOBOT_DATA_DIR",
+        help="Override nanobot data directory (config/sessions/workspace).",
+    ),
 ):
     """nanobot - Personal AI Assistant."""
+    if data_dir:
+        os.environ["NANOBOT_DATA_DIR"] = data_dir
+    if profile:
+        os.environ["NANOBOT_PROFILE"] = profile
+
     if ctx.invoked_subcommand is not None:
         return
 
@@ -155,7 +173,7 @@ def onboard(
     # Provider API keys (optional, but needed for the agent to run).
     if do_prompt:
         console.print("\n[bold]LLM Provider Setup[/bold]")
-        console.print("[dim]You can skip any prompt and edit ~/.nanobot/config.json later.[/dim]\n")
+        console.print(f"[dim]You can skip any prompt and edit {config_path} later.[/dim]\n")
 
     # Apply any explicitly provided values first (flags/env).
     if openrouter_key:
@@ -291,7 +309,7 @@ def onboard(
     console.print(f"\n{__logo__} nanobot is ready!")
     console.print("\nNext steps:")
     if not config.get_api_key():
-        console.print("  1. Add your API key to [cyan]~/.nanobot/config.json[/cyan]")
+        console.print(f"  1. Add your API key to [cyan]{config_path}[/cyan]")
         console.print("     Get one at: https://openrouter.ai/keys")
         console.print("  2. Chat: [cyan]nanobot agent -m \"Hello!\"[/cyan]")
     else:
@@ -579,7 +597,8 @@ def gateway(
 
     if not api_key and not is_bedrock:
         console.print("[red]Error: No API key configured.[/red]")
-        console.print("Set one in ~/.nanobot/config.json under providers.openrouter.apiKey")
+        from nanobot.config.loader import get_config_path
+        console.print(f"Set one in {get_config_path()} under providers.openrouter.apiKey")
         raise typer.Exit(1)
     
     provider = OpenRouterProvider(
@@ -642,7 +661,10 @@ def gateway(
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
         console.print("[yellow]Warning: No channels enabled[/yellow]")
-        console.print("[dim]Tip: run `nanobot gateway --webui` or enable a channel in ~/.nanobot/config.json[/dim]")
+        from nanobot.config.loader import get_config_path
+        console.print(
+            f"[dim]Tip: run `nanobot gateway --webui` or enable a channel in {get_config_path()}[/dim]"
+        )
 
     # Web UI hint (served by the webui channel itself).
     webui_url: str | None = None
@@ -971,8 +993,10 @@ def _get_bridge_dir() -> Path:
     import shutil
     import subprocess
     
-    # User's bridge location
-    user_bridge = Path.home() / ".nanobot" / "bridge"
+    from nanobot.config.loader import get_data_dir
+
+    # User's bridge location (profile-aware)
+    user_bridge = get_data_dir() / "bridge"
     
     # Check if already built
     if (user_bridge / "dist" / "index.js").exists():
@@ -1028,14 +1052,19 @@ def _get_bridge_dir() -> Path:
 def channels_login():
     """Link device via QR code."""
     import subprocess
+    import os as _os
     
+    from nanobot.config.loader import get_data_dir
+
     bridge_dir = _get_bridge_dir()
     
     console.print(f"{__logo__} Starting bridge...")
     console.print("Scan the QR code to connect.\n")
     
     try:
-        subprocess.run(["npm", "start"], cwd=bridge_dir, check=True)
+        env = _os.environ.copy()
+        env.setdefault("AUTH_DIR", str(get_data_dir() / "whatsapp-auth"))
+        subprocess.run(["npm", "start"], cwd=bridge_dir, check=True, env=env)
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Bridge failed: {e}[/red]")
     except FileNotFoundError:
