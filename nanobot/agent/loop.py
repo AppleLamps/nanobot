@@ -130,6 +130,7 @@ class AgentLoop:
         chat_id: str,
         allowed_tools: list[str] | None,
         restrict_workspace: bool | None,
+        model: str | None = None,
     ) -> ToolRegistry:
         """Build a request-scoped tool registry (no shared mutable per-chat state)."""
         reg = ToolRegistry()
@@ -186,6 +187,7 @@ class AgentLoop:
 
         spawn_tool = SpawnTool(manager=self.subagents)
         spawn_tool.set_context(channel, chat_id)
+        spawn_tool.set_model(model)
         reg.register(spawn_tool)
 
         reg.set_allowed_tools(allowed_tools if isinstance(allowed_tools, list) else None)
@@ -611,6 +613,7 @@ class AgentLoop:
             chat_id=msg.chat_id,
             allowed_tools=allowed_tools if isinstance(allowed_tools, list) else None,
             restrict_workspace=restrict_workspace if isinstance(restrict_workspace, bool) else None,
+            model=chosen_model,
         )
 
         messages = self.context.build_messages(
@@ -688,11 +691,22 @@ class AgentLoop:
                     metadata={"type": "subagent_event", "data": {"ok": False}},
                 )
             label = str(control.get("label") or "").strip() or None
+            # Resolve session model so the spawned subagent inherits the override.
+            spawn_model: str | None = None
+            try:
+                session_key = msg.session_key
+                session = self.sessions.get_or_create(session_key)
+                m = session.metadata.get("model")
+                if isinstance(m, str) and m.strip():
+                    spawn_model = m.strip()
+            except Exception:
+                pass
             result = await self.subagents.spawn_task(
                 task=task,
                 label=label,
                 origin_channel=msg.channel,
                 origin_chat_id=msg.chat_id,
+                model=spawn_model,
             )
             return OutboundMessage(
                 channel=msg.channel,
@@ -743,6 +757,7 @@ class AgentLoop:
             chat_id=origin_chat_id,
             allowed_tools=allowed_tools if isinstance(allowed_tools, list) else None,
             restrict_workspace=restrict_workspace if isinstance(restrict_workspace, bool) else None,
+            model=chosen_model,
         )
 
         messages = self.context.build_messages(

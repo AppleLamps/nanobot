@@ -1,0 +1,1 @@
+Global: likes apples and coffee.

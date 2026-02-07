@@ -61,6 +61,7 @@ class SubagentManager:
         label: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
+        model: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         task_id, display_label = await self._spawn_with_id(
@@ -68,6 +69,7 @@ class SubagentManager:
             label=label,
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
+            model=model,
         )
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
 
@@ -77,6 +79,7 @@ class SubagentManager:
         label: str | None,
         origin_channel: str,
         origin_chat_id: str,
+        model: str | None = None,
     ) -> dict[str, Any]:
         """Spawn a subagent and return structured task info for control surfaces."""
         task_id, display_label = await self._spawn_with_id(
@@ -84,6 +87,7 @@ class SubagentManager:
             label=label,
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
+            model=model,
         )
         meta = self._task_meta.get(task_id)
         return {
@@ -98,6 +102,7 @@ class SubagentManager:
         label: str | None,
         origin_channel: str,
         origin_chat_id: str,
+        model: str | None = None,
     ) -> tuple[str, str]:
         """Internal spawn helper that returns the task id and display label."""
         task_id = str(uuid.uuid4())[:8]
@@ -107,6 +112,9 @@ class SubagentManager:
             "channel": origin_channel,
             "chat_id": origin_chat_id,
         }
+
+        # Use the per-session model override if provided, otherwise fall back to default.
+        effective_model = (model or "").strip() or self.model
 
         started_at = time.time()
         self._task_meta[task_id] = {
@@ -119,7 +127,7 @@ class SubagentManager:
         }
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin)
+            self._run_subagent(task_id, task, display_label, origin, effective_model)
         )
         self._running_tasks[task_id] = bg_task
         bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
@@ -160,6 +168,7 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        model: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info(f"Subagent [{task_id}] starting task: {label}")
@@ -218,7 +227,7 @@ class SubagentManager:
                 response = await self.provider.chat(
                     messages=messages,
                     tools=tools.get_definitions(),
-                    model=self.model,
+                    model=model or self.model,
                 )
                 
                 if response.has_tool_calls:
