@@ -273,7 +273,7 @@ class ExecTool(Tool):
             # Ignore URL tokens when scanning for absolute paths (e.g., curl https://...).
             cmd_no_urls = re.sub(r"https?://[^\s\"']+", "", cmd)
 
-            win_paths = re.findall(r"[A-Za-z]:\\[^\\\"']+", cmd_no_urls)
+            win_paths = re.findall(r"[A-Za-z]:\\[^\s\"';&|]+", cmd_no_urls)
             posix_paths = re.findall(r"/[^\s\"']+", cmd_no_urls)
 
             for raw in win_paths + posix_paths:
