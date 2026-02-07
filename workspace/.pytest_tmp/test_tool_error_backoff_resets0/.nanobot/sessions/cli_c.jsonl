@@ -1,3 +1,0 @@
-{"_type": "metadata", "key": "cli:c", "created_at": "2026-02-07T02:11:12.177471", "updated_at": "2026-02-07T02:11:12.611095", "metadata": {}}
-{"role": "user", "content": "hi", "timestamp": "2026-02-07T02:11:12.611095"}
-{"role": "assistant", "content": "I'm hitting repeated tool errors. Please rephrase or provide more specific inputs.\n\nLast tool error (toggle): Error: tool failed", "timestamp": "2026-02-07T02:11:12.611095"}

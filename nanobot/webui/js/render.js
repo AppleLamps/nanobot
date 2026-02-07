@@ -307,20 +307,30 @@ export function addRow(role, text, opts) {
         if (item instanceof File) {
           url = URL.createObjectURL(item);
         } else if (typeof item === "string") {
-          url = item;
+          // Relative paths like "uploads/file.jpg" → "/uploads/file.jpg"
+          url = item.startsWith("/") || item.startsWith("http") || item.startsWith("blob:") || item.startsWith("data:")
+            ? item
+            : "/" + item;
         } else if (item && item.url) {
           url = item.url;
         }
 
         if (url) {
-          const img = document.createElement("img");
-          img.src = url;
-          img.className = "msg-img";
-          img.loading = "lazy";
-          attachDiv.appendChild(img);
+          const isImage = /\.(jpe?g|png|gif|webp|svg)$/i.test(url) ||
+            (item instanceof File && item.type && item.type.startsWith("image/")) ||
+            /^(blob:|data:image\/)/.test(url);
+          if (isImage) {
+            const img = document.createElement("img");
+            img.src = url;
+            img.className = "msg-img";
+            img.loading = "lazy";
+            attachDiv.appendChild(img);
+          }
         }
       }
-      content.appendChild(attachDiv);
+      if (attachDiv.children.length > 0) {
+        content.appendChild(attachDiv);
+      }
     }
   }
 

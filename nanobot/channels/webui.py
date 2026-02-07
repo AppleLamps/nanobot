@@ -293,6 +293,46 @@ class WebUIChannel(BaseChannel):
                 body,
             )
 
+        # Serve uploaded files (images, PDFs) from workspace/uploads/
+        if parsed.path.startswith("/uploads/"):
+            relpath = parsed.path.lstrip("/")
+            if ".." not in relpath:
+                _UPLOAD_MIMES: dict[str, str] = {
+                    ".jpg": "image/jpeg",
+                    ".jpeg": "image/jpeg",
+                    ".png": "image/png",
+                    ".gif": "image/gif",
+                    ".webp": "image/webp",
+                    ".svg": "image/svg+xml",
+                    ".pdf": "application/pdf",
+                }
+                ext = ("." + relpath.rsplit(".", 1)[-1]).lower() if "." in relpath else ""
+                mime = _UPLOAD_MIMES.get(ext)
+                if mime:
+                    try:
+                        fpath = (self.workspace / relpath).resolve()
+                        # Security: must be inside the uploads directory
+                        if self._uploads_dir.resolve() in fpath.parents or fpath == self._uploads_dir.resolve():
+                            if fpath.is_file():
+                                body = fpath.read_bytes()
+                                return _reply(
+                                    200,
+                                    [
+                                        ("Content-Type", mime),
+                                        ("Content-Length", str(len(body))),
+                                        ("Cache-Control", "public, max-age=86400, immutable"),
+                                    ],
+                                    body,
+                                )
+                    except Exception:
+                        pass
+            body = b"Not found\n"
+            return _reply(
+                404,
+                [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
+                body,
+            )
+
         route = parsed.path
         if route in ("", "/"):
             route = "/index.html"
@@ -313,7 +353,7 @@ class WebUIChannel(BaseChannel):
                 "default-src 'self'; "
                 "style-src 'self' 'unsafe-inline'; "
                 "script-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data:; "
+                "img-src 'self' data: blob:; "
                 "connect-src 'self' ws: wss:; "
                 "base-uri 'none'; "
                 "frame-ancestors 'none'"

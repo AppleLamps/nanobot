@@ -258,7 +258,8 @@ async function send() {
 
   const userAttachments = [...state.attachments];
   addRow("user", text || "(attachment)", { autoscroll: true, attachments: userAttachments });
-  state.serverHistory.push({ role: "user", content: text || "", attachments: userAttachments });
+  const historyEntry = { role: "user", content: text || "", attachments: userAttachments };
+  state.serverHistory.push(historyEntry);
 
   dom.input.value = "";
   autogrow();
@@ -274,6 +275,12 @@ async function send() {
         if (p) media.push(p);
       }
       renderAttachments();
+    }
+
+    // Replace ephemeral File attachments with server paths so re-renders work
+    if (media.length) {
+      historyEntry.media = media;
+      delete historyEntry.attachments;
     }
 
     const effectiveModel = state.currentModel || state.modelDefault;

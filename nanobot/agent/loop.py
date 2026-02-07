@@ -637,7 +637,19 @@ class AgentLoop:
             model=chosen_model,
         )
 
-        session.add_message("user", msg.content)
+        # Store media as workspace-relative paths so the webui can serve them.
+        media_rel: list[str] = []
+        if msg.media:
+            for mp in msg.media:
+                try:
+                    rel = str(Path(mp).relative_to(self.workspace)).replace("\\", "/")
+                    media_rel.append(rel)
+                except (ValueError, TypeError):
+                    pass
+        if media_rel:
+            session.add_message("user", msg.content, media=media_rel)
+        else:
+            session.add_message("user", msg.content)
         session.add_message("assistant", final_content)
         await self.sessions.save_async(session)
 
