@@ -90,7 +90,7 @@ class ContextBuilder:
         if memory_section:
             parts.append(memory_section)
 
-        skills_section = self._get_skills_section()
+        skills_section = self._get_skills_section(skill_names=skill_names)
         if skills_section:
             parts.append(skills_section)
 
@@ -275,7 +275,8 @@ When remembering something important, write to the memory file above."""
         """
         Retrieve relevant memories for this request.
 
-        Memory is scoped (global + session) and retrieved via SQLite FTS when available.
+        Memory is retrieved from the active scope plus global memory (when they differ),
+        and retrieved via SQLite FTS when available.
         """
         # Build a lightweight query from the current user message and recent user turns.
         query_parts = [current_message]
@@ -304,9 +305,21 @@ When remembering something important, write to the memory file above."""
 
         scope = (memory_scope or "session").strip().lower()
         scope_key = memory_key or (session_key if scope == "session" else None)
-        store = self._store_for_memory_scope(scope, scope_key)
-        scope_name = f"{scope}:{scope_key}" if scope_key else "global"
-        hits.extend(_ingest_and_search(store, scope_name, k=10))
+
+        # Search global memory plus the active scoped store. This avoids "missing hits"
+        # when users keep durable facts in global memory and transient ones per session/user.
+        global_store = MemoryStore.global_store(self.workspace)
+        active_store = self._store_for_memory_scope(scope, scope_key)
+
+        active_scope_name = f"{scope}:{scope_key}" if scope_key else "global"
+        scopes: list[tuple[MemoryStore, str]] = [(global_store, "global")]
+        if active_scope_name != "global":
+            scopes.append((active_store, active_scope_name))
+
+        # Keep result sizes bounded and deterministic.
+        per_scope_k = 6 if len(scopes) > 1 else 10
+        for store, scope_name in scopes:
+            hits.extend(_ingest_and_search(store, scope_name, k=per_scope_k))
 
         # De-dupe while preserving order.
         seen: set[str] = set()
@@ -337,7 +350,9 @@ When remembering something important, write to the memory file above."""
         """Build skills summary with caching by file mtimes."""
         skills = self.skills.list_skills(filter_unavailable=False)
         files: list[tuple[str, float]] = []
+        names: list[str] = []
         for s in skills:
+            names.append(s["name"])
             path = Path(s["path"])
             try:
                 mtime = path.stat().st_mtime
@@ -345,7 +360,15 @@ When remembering something important, write to the memory file above."""
                 mtime = 0.0
             files.append((str(path), mtime))
 
-        signature = (tuple(files),)
+        # Availability depends on env vars and installed CLIs, not just file mtimes.
+        availability_sig = None
+        if hasattr(self.skills, "skills_availability_signature"):
+            try:
+                availability_sig = self.skills.skills_availability_signature(names)
+            except Exception:
+                availability_sig = None
+
+        signature = (tuple(files), availability_sig)
         cached = self._get_cached("skills_summary", signature)
         if cached is not None:
             return cached
@@ -377,19 +400,66 @@ When remembering something important, write to the memory file above."""
         self._set_cache("always_skills", signature, content)
         return content
 
-    def _get_skills_section(self) -> str:
+    def _get_requested_skills_content(self, skill_names: list[str]) -> str:
+        """Load explicitly requested skills with caching by file mtimes."""
+        if not skill_names:
+            return ""
+
+        files: list[tuple[str, str, float]] = []
+        for name in skill_names:
+            path = self.skills.resolve_skill_path(name)
+            if not path:
+                continue
+            try:
+                mtime = path.stat().st_mtime
+            except Exception:
+                mtime = 0.0
+            files.append((name, str(path), mtime))
+
+        signature = (tuple(files),)
+        cached = self._get_cached("requested_skills", signature)
+        if cached is not None:
+            return cached
+
+        content = self.skills.load_skills_for_context(skill_names)
+        self._set_cache("requested_skills", signature, content)
+        return content
+
+    def _get_skills_section(self, *, skill_names: list[str] | None = None) -> str:
         """Build full skills section with truncation and caching."""
+        requested_raw = [s.strip() for s in (skill_names or []) if isinstance(s, str) and s.strip()]
+        if requested_raw:
+            try:
+                always_set = set(self.skills.get_always_skills())
+            except Exception:
+                always_set = set()
+            requested = [s for s in requested_raw if s not in always_set]
+        else:
+            requested = []
         always_content = self._get_always_skills_content()
         skills_summary = self._get_skills_summary()
 
-        signature = (hash(always_content), hash(skills_summary), self.skills_max_chars)
+        # Requested skills should be included verbatim in-context (progressive disclosure),
+        # so include them in the cache signature.
+        requested_content = self._get_requested_skills_content(requested)
+        signature = (
+            hash(always_content),
+            hash(requested_content),
+            hash(skills_summary),
+            self.skills_max_chars,
+        )
         cached = self._get_cached("skills_section", signature)
         if cached is not None:
             return cached
 
         parts = []
-        if always_content:
-            parts.append(f"# Active Skills\n\n{always_content}")
+        if always_content or requested_content:
+            active_parts: list[str] = []
+            if always_content:
+                active_parts.append(always_content)
+            if requested_content:
+                active_parts.append(requested_content)
+            parts.append("# Active Skills\n\n" + "\n\n---\n\n".join(active_parts))
 
         if skills_summary:
             parts.append(f"""# Skills

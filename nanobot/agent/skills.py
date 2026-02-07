@@ -168,6 +168,31 @@ class SkillsLoader:
             if not os.environ.get(env):
                 missing.append(f"ENV: {env}")
         return ", ".join(missing)
+
+    def skills_availability_signature(self, names: list[str]) -> tuple:
+        """
+        Return a stable signature capturing current availability for skills.
+
+        This includes the resolved CLI paths (via shutil.which) and env var presence
+        for each skill's declared requirements. It's intended for cache invalidation.
+        """
+
+        def _one(name: str) -> tuple:
+            meta = self._get_skill_meta(name)
+            requires = meta.get("requires", {}) if isinstance(meta, dict) else {}
+
+            bins = requires.get("bins", []) if isinstance(requires, dict) else []
+            envs = requires.get("env", []) if isinstance(requires, dict) else []
+
+            # Normalize and de-dupe for stability.
+            bins_norm = sorted({str(b).strip() for b in bins if str(b).strip()})
+            envs_norm = sorted({str(e).strip() for e in envs if str(e).strip()})
+
+            bins_state = tuple((b, shutil.which(b) or "") for b in bins_norm)
+            env_state = tuple((e, "1" if os.environ.get(e) else "0") for e in envs_norm)
+            return (name, bins_state, env_state)
+
+        return tuple(_one(n) for n in (names or []))
     
     def _get_skill_description(self, name: str) -> str:
         """Get the description of a skill from its frontmatter."""
@@ -247,11 +272,49 @@ class SkillsLoader:
         if content.startswith("---"):
             match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
             if match:
-                # Simple YAML parsing
-                for line in match.group(1).split("\n"):
-                    if ":" in line:
-                        key_part, value = line.split(":", 1)
-                        metadata[key_part.strip()] = value.strip().strip('"\'')
+                # Lightweight YAML-ish parsing for simple "key: value" and block scalars.
+                # We intentionally avoid a full YAML dependency here; skill frontmatter is expected
+                # to be small and mostly flat. This parser is resilient to colons inside values
+                # and supports:
+                #   metadata: |
+                #     {...}
+                raw = match.group(1)
+                lines = raw.split("\n")
+                i = 0
+                while i < len(lines):
+                    line = lines[i]
+                    if not line.strip():
+                        i += 1
+                        continue
+                    if ":" not in line:
+                        i += 1
+                        continue
+
+                    key_part, rest = line.split(":", 1)
+                    key = key_part.strip()
+                    rest = rest.lstrip()
+
+                    if rest in ("|", ">"):
+                        i += 1
+                        buf: list[str] = []
+                        while i < len(lines):
+                            nxt = lines[i]
+                            if nxt.startswith((" ", "\t")):
+                                buf.append(nxt.lstrip(" \t"))
+                                i += 1
+                                continue
+                            break
+                        metadata[key] = "\n".join(buf).rstrip()
+                        continue
+
+                    value = rest.strip()
+                    if (
+                        (value.startswith('"') and value.endswith('"'))
+                        or (value.startswith("'") and value.endswith("'"))
+                    ) and len(value) >= 2:
+                        value = value[1:-1]
+                    metadata[key] = value
+                    i += 1
 
         self._metadata_cache[key] = (mtime, metadata)
         return metadata or None
