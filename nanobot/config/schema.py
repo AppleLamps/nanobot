@@ -151,9 +151,15 @@ class WebSearchConfig(BaseModel):
     max_results: int = 5
 
 
+class FirecrawlConfig(BaseModel):
+    """Firecrawl scrape tool configuration."""
+    api_key: str = ""  # Firecrawl API key
+
+
 class WebToolsConfig(BaseModel):
     """Web tools configuration."""
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
+    firecrawl: FirecrawlConfig = Field(default_factory=FirecrawlConfig)
 
 
 class ExecToolConfig(BaseModel):

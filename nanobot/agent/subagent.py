@@ -17,7 +17,7 @@ from nanobot.providers.base import LLMProvider
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebSearchTool, WebFetchTool
+from nanobot.agent.tools.web import FirecrawlScrapeTool, WebSearchTool, WebFetchTool
 
 if TYPE_CHECKING:
     from nanobot.config.schema import ExecToolConfig
@@ -39,6 +39,7 @@ class SubagentManager:
         bus: MessageBus,
         model: str | None = None,
         brave_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
         exec_config: ExecToolConfig | None = None,
         progress_interval_s: int = 15,
     ):
@@ -48,6 +49,7 @@ class SubagentManager:
         self.bus = bus
         self.model = model or provider.get_default_model()
         self.brave_api_key = brave_api_key
+        self.firecrawl_api_key = firecrawl_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._task_meta: dict[str, dict[str, Any]] = {}
@@ -196,6 +198,7 @@ class SubagentManager:
             ))
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             tools.register(WebFetchTool())
+            tools.register(FirecrawlScrapeTool(api_key=self.firecrawl_api_key))
             
             # Build messages with subagent-specific prompt
             system_prompt = self._build_subagent_prompt(task)

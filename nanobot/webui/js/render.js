@@ -172,6 +172,77 @@ export function renderMarkdown(text) {
         continue;
       }
 
+      /* --- Table detection --- */
+      if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+        flushPara();
+        flushList();
+        const tableLines = [];
+        for (; i < lines.length; i++) {
+          const tl = lines[i].trim();
+          if (tl.startsWith("|") && tl.endsWith("|")) {
+            tableLines.push(tl);
+          } else {
+            break;
+          }
+        }
+        i -= 1;
+
+        if (tableLines.length >= 2) {
+          const parseCells = (row) =>
+            row.slice(1, -1).split("|").map((c) => c.trim());
+
+          /* Detect separator row (second line) and extract alignment */
+          const sepCells = parseCells(tableLines[1]);
+          const isSep = sepCells.every((c) => /^:?-{1,}:?$/.test(c));
+          const aligns = isSep
+            ? sepCells.map((c) => {
+              if (c.startsWith(":") && c.endsWith(":")) return "center";
+              if (c.endsWith(":")) return "right";
+              return "";
+            })
+            : [];
+
+          const table = document.createElement("table");
+          const headCells = parseCells(tableLines[0]);
+          if (isSep) {
+            const thead = document.createElement("thead");
+            const tr = document.createElement("tr");
+            headCells.forEach((c, ci) => {
+              const th = document.createElement("th");
+              if (aligns[ci]) th.style.textAlign = aligns[ci];
+              th.innerHTML = inlineHtml(c);
+              tr.appendChild(th);
+            });
+            thead.appendChild(tr);
+            table.appendChild(thead);
+          }
+
+          const tbody = document.createElement("tbody");
+          const dataStart = isSep ? 2 : 0;
+          for (let r = dataStart; r < tableLines.length; r++) {
+            const cells = parseCells(tableLines[r]);
+            const tr = document.createElement("tr");
+            cells.forEach((c, ci) => {
+              const td = document.createElement("td");
+              if (aligns[ci]) td.style.textAlign = aligns[ci];
+              td.innerHTML = inlineHtml(c);
+              tr.appendChild(td);
+            });
+            tbody.appendChild(tr);
+          }
+          table.appendChild(tbody);
+
+          const wrapper = document.createElement("div");
+          wrapper.className = "table-wrap";
+          wrapper.appendChild(table);
+          root.appendChild(wrapper);
+        } else {
+          /* Single pipe line — treat as paragraph */
+          para.push(tableLines[0]);
+        }
+        continue;
+      }
+
       para.push(trimmed);
     }
 

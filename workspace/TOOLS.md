@@ -8,7 +8,7 @@ This document describes the tools available to nanobot.
 
 Read the contents of a file.
 
-```
+```python
 read_file(path: str) -> str
 ```
 
@@ -16,7 +16,7 @@ read_file(path: str) -> str
 
 Write content to a file (creates parent directories if needed).
 
-```
+```python
 write_file(path: str, content: str) -> str
 ```
 
@@ -24,7 +24,7 @@ write_file(path: str, content: str) -> str
 
 Edit a file by replacing specific text.
 
-```
+```python
 edit_file(path: str, old_text: str, new_text: str) -> str
 ```
 
@@ -32,7 +32,7 @@ edit_file(path: str, old_text: str, new_text: str) -> str
 
 List contents of a directory.
 
-```
+```python
 list_dir(path: str) -> str
 ```
 
@@ -42,7 +42,7 @@ list_dir(path: str) -> str
 
 Execute a shell command and return output.
 
-```
+```python
 exec(command: str, working_dir: str = None) -> str
 ```
 
@@ -59,7 +59,7 @@ exec(command: str, working_dir: str = None) -> str
 
 Search the web using Brave Search API.
 
-```
+```python
 web_search(query: str, count: int = 5) -> str
 ```
 
@@ -69,7 +69,7 @@ Returns search results with titles, URLs, and snippets. Requires `tools.web.sear
 
 Fetch and extract main content from a URL.
 
-```
+```python
 web_fetch(url: str, extractMode: str = "markdown", maxChars: int = 50000) -> str
 ```
 
@@ -85,21 +85,35 @@ web_fetch(url: str, extractMode: str = "markdown", maxChars: int = 50000) -> str
 
 Send a message to the user (used internally).
 
-```
+```python
 message(content: str, channel: str = None, chat_id: str = None) -> str
 ```
 
-## Background Tasks
+## Background Tasks (Subagents)
 
 ### spawn
 
-Spawn a subagent to handle a task in the background.
+Delegate a task to a background subagent. **This is your primary execution strategy.**
 
-```
+```python
 spawn(task: str, label: str = None) -> str
 ```
 
-Use for complex or time-consuming tasks that can run independently. The subagent will complete the task and report back when done.
+The subagent runs asynchronously with full tool access (files, exec, web) and reports back when done. While it works, you remain free to chat with the user.
+
+**Use `spawn` for any task requiring 2+ tool calls.** This includes: web searches, file modifications, running commands, research, code generation, multi-step analysis.
+
+Only skip spawning for: direct knowledge answers, single quick file reads, conversational replies.
+
+Write clear, detailed task descriptions so the subagent knows exactly what to do.
+
+### subagent_control
+
+List or cancel running subagents.
+
+```python
+subagent_control(action: "list" | "cancel", task_id: str = None) -> str
+```
 
 ## Scheduled Reminders (Cron)
 
@@ -167,23 +181,6 @@ write_file(
 ```
 
 ---
-
-## Subagent Management
-
-Use background workers for long-running or parallel tasks.
-
-### Spawn a subagent
-
-```python
-spawn(task="Analyze the repo for TODOs", label="todo-scan")
-```
-
-### Track or cancel running subagents
-
-```python
-subagent_control(action="list")
-subagent_control(action="cancel", task_id="abcd1234")
-```
 
 ## Adding Custom Tools
 

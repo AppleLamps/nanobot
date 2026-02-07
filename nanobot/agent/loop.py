@@ -18,7 +18,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.subagent_control import SubagentControlTool
 from nanobot.agent.tools.spawn import SpawnTool
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.tools.web import FirecrawlScrapeTool, WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
@@ -49,6 +49,7 @@ class AgentLoop:
         model: str | None = None,
         max_iterations: int | None = None,
         brave_api_key: str | None = None,
+        firecrawl_api_key: str | None = None,
         exec_config: ExecToolConfig | None = None,
         allowed_tools: list[str] | None = None,
         agent_config: AgentDefaults | None = None,
@@ -66,6 +67,7 @@ class AgentLoop:
             max_iterations if max_iterations is not None else cfg.max_tool_iterations
         )
         self.brave_api_key = brave_api_key
+        self.firecrawl_api_key = firecrawl_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self.allowed_tools = allowed_tools
 
@@ -102,6 +104,7 @@ class AgentLoop:
             bus=bus,
             model=self.model,
             brave_api_key=brave_api_key,
+            firecrawl_api_key=firecrawl_api_key,
             exec_config=self.exec_config,
         )
 
@@ -166,6 +169,7 @@ class AgentLoop:
             reg.register(SubagentControlTool(manager=self.subagents))
             reg.register(WebSearchTool(api_key=self.brave_api_key))
             reg.register(WebFetchTool())
+            reg.register(FirecrawlScrapeTool(api_key=self.firecrawl_api_key))
         else:
             # Copy all registered tools, but always override message/spawn with request-scoped instances.
             for tool in self.tools.iter_tools():
@@ -227,6 +231,7 @@ class AgentLoop:
         # Web tools
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
+        self.tools.register(FirecrawlScrapeTool(api_key=self.firecrawl_api_key))
         self.tools.register(SubagentControlTool(manager=self.subagents))
 
         # Note: message/spawn tools are NOT registered on the base registry.

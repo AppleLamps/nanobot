@@ -178,3 +178,98 @@ class WebFetchTool(Tool):
         text = re.sub(r'</(p|div|section|article)>', '\n\n', text, flags=re.I)
         text = re.sub(r'<(br|hr)\s*/?>', '\n', text, flags=re.I)
         return _normalize(_strip_tags(text))
+
+
+class FirecrawlScrapeTool(Tool):
+    """Scrape a URL using the Firecrawl API (returns clean markdown)."""
+
+    name = "firecrawl_scrape"
+    description = (
+        "Scrape a webpage via Firecrawl and return clean markdown content. "
+        "Better than web_fetch for JS-heavy sites and PDFs."
+    )
+    parallel_safe = True
+    cacheable = True
+    cache_ttl_s = 600.0
+    max_retries = 1
+    parameters = {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "URL to scrape"},
+            "maxChars": {
+                "type": "integer",
+                "minimum": 100,
+                "description": "Max characters to return (default 50000)",
+            },
+        },
+        "required": ["url"],
+    }
+
+    def __init__(self, api_key: str | None = None, max_chars: int = 50000):
+        self.api_key = api_key or os.environ.get("FIRECRAWL_API_KEY", "")
+        self.max_chars = max_chars
+
+    async def execute(
+        self, url: str, maxChars: int | None = None, **kwargs: Any
+    ) -> str:
+        if not self.api_key:
+            return "Error: FIRECRAWL_API_KEY not configured"
+
+        max_chars = maxChars or self.max_chars
+
+        is_valid, error_msg = _validate_url(url)
+        if not is_valid:
+            return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url})
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(
+                    "https://api.firecrawl.dev/v2/scrape",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "url": url,
+                        "onlyMainContent": True,
+                        "formats": ["markdown"],
+                    },
+                )
+                r.raise_for_status()
+
+            body = r.json()
+            if not body.get("success"):
+                error = (body.get("data") or {}).get("metadata", {}).get("error", "Unknown error")
+                return json.dumps({"error": error, "url": url})
+
+            data = body.get("data", {})
+            text = data.get("markdown") or ""
+            meta = data.get("metadata") or {}
+            title = meta.get("title", "")
+            source = meta.get("sourceURL", url)
+            status = meta.get("statusCode", 200)
+
+            truncated = len(text) > max_chars
+            if truncated:
+                text = text[:max_chars]
+
+            return json.dumps({
+                "url": url,
+                "sourceURL": source,
+                "status": status,
+                "title": title,
+                "truncated": truncated,
+                "length": len(text),
+                "text": text,
+            })
+        except Exception as e:
+            return json.dumps({"error": str(e), "url": url})
+
+    def should_cache(self, result: str) -> bool:
+        try:
+            obj = json.loads(result)
+            if isinstance(obj, dict) and obj.get("error"):
+                return False
+        except Exception:
+            pass
+        return super().should_cache(result)

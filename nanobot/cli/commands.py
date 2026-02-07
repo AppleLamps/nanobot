@@ -142,6 +142,9 @@ def onboard(
     brave_key: str | None = typer.Option(
         None, "--brave-key", envvar="BRAVE_API_KEY", help="Brave Search API key (enables web.search tool)."
     ),
+    firecrawl_key: str | None = typer.Option(
+        None, "--firecrawl-key", envvar="FIRECRAWL_API_KEY", help="Firecrawl API key (enables firecrawl_scrape tool)."
+    ),
     model: str | None = typer.Option(
         None, "--model", help="Default model (e.g. openai/gpt-oss-120b:exacto)."
     ),
@@ -192,6 +195,8 @@ def onboard(
         config.providers.vllm.api_base = vllm_base.strip()
     if brave_key:
         config.tools.web.search.api_key = brave_key.strip()
+    if firecrawl_key:
+        config.tools.web.firecrawl.api_key = firecrawl_key.strip()
     if model:
         config.agents.defaults.model = model.strip() or config.agents.defaults.model
 
@@ -285,6 +290,12 @@ def onboard(
             brave = _prompt_optional_secret("Brave Search API key (enables web.search tool)")
             if brave:
                 config.tools.web.search.api_key = brave
+
+        # Optional: Firecrawl API key.
+        if not config.tools.web.firecrawl.api_key:
+            firecrawl = _prompt_optional_secret("Firecrawl API key (enables firecrawl_scrape tool)")
+            if firecrawl:
+                config.tools.web.firecrawl.api_key = firecrawl
 
         # Optional: override default model
         if not model:
@@ -643,10 +654,11 @@ def gateway(
         max_iterations=config.agents.defaults.max_tool_iterations,
         agent_config=config.agents.defaults,
         brave_api_key=config.tools.web.search.api_key or None,
+        firecrawl_api_key=config.tools.web.firecrawl.api_key or None,
         exec_config=config.tools.exec,
         allowed_tools=config.tools.allowed_tools,
     )
-    
+
     # Create cron service
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
@@ -796,6 +808,7 @@ def agent(
         provider=provider,
         workspace=config.workspace_path,
         brave_api_key=config.tools.web.search.api_key or None,
+        firecrawl_api_key=config.tools.web.firecrawl.api_key or None,
         exec_config=config.tools.exec,
         allowed_tools=config.tools.allowed_tools,
         agent_config=config.agents.defaults,
