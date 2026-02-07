@@ -503,7 +503,7 @@ Use `exec` to manage skills:
         file_path = workspace / filename
         if not file_path.exists():
             file_path.write_text(content)
-            console.print(f"  [dim]Created {filename}[/dim]")
+            console.print(f"  [green]✓[/green] Created {filename}")
     
     # Create memory directory and MEMORY.md
     memory_dir = workspace / "memory"
@@ -526,7 +526,7 @@ This file stores important information that should persist across sessions.
 
 (Things to remember)
 """)
-        console.print("  [dim]Created memory/MEMORY.md[/dim]")
+        console.print("  [green]✓[/green] Created memory/MEMORY.md")
 
     # Create scope directories so the default config (memoryScope=session) feels real immediately.
     # CLI default session id is "cli:default" -> on disk "cli_default".
@@ -550,7 +550,7 @@ This file is used when `memoryScope` is set to `session` and you're chatting fro
 """,
             encoding="utf-8",
         )
-        console.print("  [dim]Created memory/sessions/cli_default/MEMORY.md[/dim]")
+        console.print("  [green]✓[/green] Created memory/sessions/cli_default/MEMORY.md")
 
 
 # ============================================================================
@@ -562,6 +562,7 @@ This file is used when `memoryScope` is set to `session` and you're chatting fro
 def gateway(
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
     webui: bool = typer.Option(False, "--webui", help="Enable the local Web UI channel"),
+    webui_port: int | None = typer.Option(None, "--webui-port", help="WebUI port (default: same as --port, or 18791)"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
     """Start the nanobot gateway."""
@@ -585,6 +586,30 @@ def gateway(
     # Convenience: allow enabling WebUI without editing config.json.
     if webui and getattr(config.channels, "webui", None):
         config.channels.webui.enabled = True
+
+    # Apply WebUI port: --webui-port takes priority, then --port (if non-default), then config.
+    if getattr(config.channels, "webui", None) and config.channels.webui.enabled:
+        if webui_port is not None:
+            config.channels.webui.port = webui_port
+        elif port != 18790:
+            config.channels.webui.port = port
+
+        # Check if the WebUI port is already in use before proceeding.
+        import socket
+        _webui_host = (config.channels.webui.host or "127.0.0.1").strip()
+        _webui_port = int(config.channels.webui.port or 18791)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                _s.settimeout(0.5)
+                _s.bind((_webui_host, _webui_port))
+        except OSError:
+            console.print(
+                f"[red]Error: WebUI port {_webui_port} is already in use.[/red]\n"
+                f"[dim]Another nanobot instance may be running on this port.\n"
+                f"Use --webui-port to specify a different port, e.g.:[/dim]\n"
+                f"  nanobot gateway --webui --webui-port {_webui_port + 2}"
+            )
+            raise typer.Exit(1)
     
     # Create components
     bus = MessageBus()

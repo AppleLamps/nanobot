@@ -262,9 +262,18 @@ export function connect() {
     if (gen !== _connectGen) return;
 
     /* Server kicked us as a duplicate session — another tab/connection owns this session.
-       Reconnecting would just start a kick-reconnect loop. */
+       Show a recoverable status instead of permanently dying. The user can click to
+       reconnect (useful when the other tab was stale or is now closed). */
     if (ev.code === 4400) {
-      setStatus("bad", "duplicate session");
+      setStatus("bad", "duplicate session — click status to reconnect");
+      /* Allow clicking the status dot / text to reconnect manually. */
+      const _reconnectOnClick = () => {
+        if (dom.dot) dom.dot.removeEventListener("click", _reconnectOnClick);
+        if (dom.status) dom.status.removeEventListener("click", _reconnectOnClick);
+        connect();
+      };
+      if (dom.dot) dom.dot.addEventListener("click", _reconnectOnClick, { once: true });
+      if (dom.status) dom.status.addEventListener("click", _reconnectOnClick, { once: true });
       return;
     }
 
