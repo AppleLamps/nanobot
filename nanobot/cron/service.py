@@ -6,7 +6,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import Any, Callable, Coroutine, Literal
 
 from loguru import logger
 
@@ -79,6 +79,9 @@ class CronService:
                 data = json.loads(self.store_path.read_text())
                 jobs = []
                 for j in data.get("jobs", []):
+                    payload_type = j.get("payload", {}).get("type", "task")
+                    if payload_type not in ("task", "reminder"):
+                        payload_type = "task"
                     jobs.append(CronJob(
                         id=j["id"],
                         name=j["name"],
@@ -91,6 +94,7 @@ class CronService:
                             tz=j["schedule"].get("tz"),
                         ),
                         payload=CronPayload(
+                            type=payload_type,
                             kind=j["payload"].get("kind", "agent_turn"),
                             message=j["payload"].get("message", ""),
                             deliver=j["payload"].get("deliver", False),
@@ -138,6 +142,7 @@ class CronService:
                         "tz": j.schedule.tz,
                     },
                     "payload": {
+                        "type": j.payload.type,
                         "kind": j.payload.kind,
                         "message": j.payload.message,
                         "deliver": j.payload.deliver,
@@ -274,6 +279,7 @@ class CronService:
         name: str,
         schedule: CronSchedule,
         message: str,
+        payload_type: Literal["reminder", "task"] = "task",
         deliver: bool = False,
         channel: str | None = None,
         to: str | None = None,
@@ -282,6 +288,9 @@ class CronService:
         """Add a new job."""
         store = self._load_store()
         now = _now_ms()
+
+        if payload_type not in ("task", "reminder"):
+            payload_type = "task"
         
         job = CronJob(
             id=str(uuid.uuid4())[:8],
@@ -289,6 +298,7 @@ class CronService:
             enabled=True,
             schedule=schedule,
             payload=CronPayload(
+                type=payload_type,
                 kind="agent_turn",
                 message=message,
                 deliver=deliver,

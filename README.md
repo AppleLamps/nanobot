@@ -624,8 +624,12 @@ nanobot cron add --name "hourly" --message "Check status" --every 3600
 # Add a one-time job
 nanobot cron add --name "reminder" --message "Call dentist" --at "2026-03-01T14:00:00"
 
-# Deliver the response to a specific channel
+# Deliver the agent's response to a specific channel (task mode; default)
 nanobot cron add --name "report" --message "Daily summary" --cron "0 18 * * *" \
+  --deliver --to "123456789" --channel "telegram"
+
+# Deliver a reminder verbatim (bypass agent loop)
+nanobot cron add --name "water" --type reminder --message "Drink water" --every 3600 \
   --deliver --to "123456789" --channel "telegram"
 
 # List jobs

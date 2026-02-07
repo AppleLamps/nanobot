@@ -662,18 +662,34 @@ def gateway(
     # Create cron service
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
-        response = await agent.process_direct(
-            job.payload.message,
-            session_key=f"cron:{job.id}"
-        )
-        # Optionally deliver to channel
+        # Reminders are delivered verbatim and bypass the agent loop.
+        if job.payload.type == "reminder":
+            if job.payload.deliver and job.payload.to:
+                from nanobot.bus.events import OutboundMessage
+
+                await bus.publish_outbound(
+                    OutboundMessage(
+                        channel=job.payload.channel or "whatsapp",
+                        chat_id=job.payload.to,
+                        content=job.payload.message,
+                        metadata={"type": "cron_reminder", "job_id": job.id, "job_name": job.name},
+                    )
+                )
+            return job.payload.message
+
+        # Tasks are processed by the agent; optionally deliver the agent response.
+        response = await agent.process_direct(job.payload.message, session_key=f"cron:{job.id}")
         if job.payload.deliver and job.payload.to:
             from nanobot.bus.events import OutboundMessage
-            await bus.publish_outbound(OutboundMessage(
-                channel=job.payload.channel or "whatsapp",
-                chat_id=job.payload.to,
-                content=response or ""
-            ))
+
+            await bus.publish_outbound(
+                OutboundMessage(
+                    channel=job.payload.channel or "whatsapp",
+                    chat_id=job.payload.to,
+                    content=response or "",
+                    metadata={"type": "cron_task", "job_id": job.id, "job_name": job.name},
+                )
+            )
         return response
     
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
@@ -1137,6 +1153,7 @@ def cron_list(
     table = Table(title="Scheduled Jobs")
     table.add_column("ID", style="cyan")
     table.add_column("Name")
+    table.add_column("Type")
     table.add_column("Schedule")
     table.add_column("Status")
     table.add_column("Next Run")
@@ -1159,7 +1176,7 @@ def cron_list(
         
         status = "[green]enabled[/green]" if job.enabled else "[dim]disabled[/dim]"
         
-        table.add_row(job.id, job.name, sched, status, next_run)
+        table.add_row(job.id, job.name, job.payload.type, sched, status, next_run)
     
     console.print(table)
 
@@ -1168,6 +1185,7 @@ def cron_list(
 def cron_add(
     name: str = typer.Option(..., "--name", "-n", help="Job name"),
     message: str = typer.Option(..., "--message", "-m", help="Message for agent"),
+    job_type: str = typer.Option("task", "--type", help="Payload type: task (agent executes) or reminder (verbatim)"),
     every: int = typer.Option(None, "--every", "-e", help="Run every N seconds"),
     cron_expr: str = typer.Option(None, "--cron", "-c", help="Cron expression (e.g. '0 9 * * *')"),
     at: str = typer.Option(None, "--at", help="Run once at time (ISO format)"),
@@ -1195,11 +1213,19 @@ def cron_add(
     
     store_path = get_data_dir() / "cron" / "jobs.json"
     service = CronService(store_path)
+
+    job_type = (job_type or "task").strip().lower()
+    if job_type not in ("task", "reminder"):
+        console.print("[red]Error: --type must be 'task' or 'reminder'[/red]")
+        raise typer.Exit(1)
+    from typing import Literal, cast
+    payload_type = cast(Literal["task", "reminder"], job_type)
     
     job = service.add_job(
         name=name,
         schedule=schedule,
         message=message,
+        payload_type=payload_type,
         deliver=deliver,
         to=to,
         channel=channel,

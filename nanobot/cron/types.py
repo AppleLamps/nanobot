@@ -21,6 +21,10 @@ class CronSchedule:
 @dataclass
 class CronPayload:
     """What to do when the job runs."""
+    # Primary semantic mode for the job payload:
+    # - reminder: deliver message verbatim (bypass agent loop)
+    # - task: treat message as instructions for the agent to execute
+    type: Literal["reminder", "task"] = "task"
     kind: Literal["system_event", "agent_turn"] = "agent_turn"
     message: str = ""
     # Deliver response to channel
