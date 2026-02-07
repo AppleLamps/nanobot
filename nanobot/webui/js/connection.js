@@ -8,6 +8,7 @@ import {
   renderMarkdown,
   renderHistory,
   updateEmpty,
+  renderSubagents,
 } from "./render.js";
 
 /* --- Waiter system for request/response over WS --- */
@@ -45,18 +46,29 @@ export function wsUrl() {
 
 /* --- Connect --- */
 
+let _connectGen = 0;
+let _reconnectDelay = 700;
+const _RECONNECT_MIN = 700;
+const _RECONNECT_MAX = 15000;
+
 export function connect() {
+  const gen = ++_connectGen;
+  _reconnectDelay = _RECONNECT_MIN;
   setStatus("", "connecting");
   if (dom.latency) dom.latency.textContent = "";
 
   try {
-    if (state.ws) state.ws.close();
+    if (state.ws) {
+      state.ws._noreconnect = true;
+      state.ws.close();
+    }
   } catch (_) { }
 
   state.ws = new WebSocket(wsUrl());
 
   state.ws.addEventListener("open", () => {
     setStatus("ok", "online");
+    _reconnectDelay = _RECONNECT_MIN;
     try {
       state.ws.send(
         JSON.stringify({
@@ -169,6 +181,33 @@ export function connect() {
       return;
     }
 
+    if (data.type === "subagents") {
+      const list = (data.data && data.data.tasks) || [];
+      state.subagents = Array.isArray(list) ? list : [];
+      renderSubagents(state.subagents, {
+        onCancel(taskId) {
+          if (!taskId) return;
+          if (!state.ws || state.ws.readyState !== 1) return;
+          state.ws.send(JSON.stringify({ type: "subagent_cancel", task_id: taskId }));
+        },
+      });
+      return;
+    }
+
+    if (data.type === "subagent_event") {
+      const ok = data.data && data.data.ok;
+      const msg = String(data.content || "").trim();
+      if (msg) toastMsg(msg);
+      else if (ok === true) toastMsg("Subagent updated.");
+      else if (ok === false) toastMsg("Subagent action failed.");
+      try {
+        if (state.ws && state.ws.readyState === 1) {
+          state.ws.send(JSON.stringify({ type: "subagent_list" }));
+        }
+      } catch (_) { }
+      return;
+    }
+
     if (data.type === "status") {
       const c = String(data.content || "").trim();
       if (state.thinkingRow && c) {
@@ -217,9 +256,21 @@ export function connect() {
     }
   });
 
-  state.ws.addEventListener("close", () => {
+  state.ws.addEventListener("close", (ev) => {
+    /* Don't reconnect if this WS was intentionally replaced by a newer connect() call. */
+    if (ev.target._noreconnect) return;
+    if (gen !== _connectGen) return;
+
+    /* Server kicked us as a duplicate session — another tab/connection owns this session.
+       Reconnecting would just start a kick-reconnect loop. */
+    if (ev.code === 4400) {
+      setStatus("bad", "duplicate session");
+      return;
+    }
+
     setStatus("bad", "offline");
-    setTimeout(connect, 700);
+    setTimeout(connect, _reconnectDelay);
+    _reconnectDelay = Math.min(_reconnectDelay * 2, _RECONNECT_MAX);
   });
 
   state.ws.addEventListener("error", () => {

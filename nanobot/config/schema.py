@@ -59,6 +59,7 @@ class AgentDefaults(BaseModel):
     workspace: str = "~/.nanobot/workspace"
     provider: str = ""
     model: str = "openai/gpt-oss-120b:exacto"
+    fallback_models: list[str] = Field(default_factory=list)
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20

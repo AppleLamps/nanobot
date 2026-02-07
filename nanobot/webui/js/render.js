@@ -319,3 +319,62 @@ export function renderSessions(items, { onSwitch }) {
     dom.sessionsList.appendChild(d);
   }
 }
+
+/* --- Subagent list --- */
+
+function fmtElapsed(startedAt) {
+  const ts = Number(startedAt || 0);
+  if (!ts) return "";
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  const m = Math.floor(elapsed / 60);
+  const s = elapsed % 60;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+export function renderSubagents(items, { onCancel } = {}) {
+  if (!dom.subagentList) return;
+  dom.subagentList.innerHTML = "";
+
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    const empty = document.createElement("div");
+    empty.className = "subagent-empty";
+    empty.textContent = "No running subagents.";
+    dom.subagentList.appendChild(empty);
+    return;
+  }
+
+  for (const it of list) {
+    const row = document.createElement("div");
+    row.className = "subagent-item";
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = `${it.label || it.id || "subagent"} (${fmtElapsed(it.started_at)})`;
+
+    const task = document.createElement("div");
+    task.className = "task";
+    task.textContent = it.task || "";
+
+    meta.appendChild(label);
+    meta.appendChild(task);
+
+    const actions = document.createElement("div");
+    const btn = document.createElement("button");
+    btn.className = "btn";
+    btn.type = "button";
+    btn.textContent = "Cancel";
+    btn.addEventListener("click", () => {
+      if (onCancel) onCancel(it.id || "");
+    });
+    actions.appendChild(btn);
+
+    row.appendChild(meta);
+    row.appendChild(actions);
+    dom.subagentList.appendChild(row);
+  }
+}

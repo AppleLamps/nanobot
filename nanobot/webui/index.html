@@ -185,6 +185,25 @@
               <div class="settings-label">Logs</div>
               <button class="btn" id="download-logs" type="button">Download logs</button>
             </div>
+            <div class="settings-divider"></div>
+            <div class="settings-subhead">Subagents</div>
+            <div class="settings-row">
+              <label class="settings-label" for="subagent-task">Task</label>
+              <input id="subagent-task" class="settings-input" type="text" placeholder="Describe the background task" />
+            </div>
+            <div class="settings-row">
+              <label class="settings-label" for="subagent-label">Label</label>
+              <input id="subagent-label" class="settings-input" type="text" placeholder="Optional short label" />
+            </div>
+            <div class="settings-row">
+              <div class="settings-label">Controls</div>
+              <div class="settings-actions">
+                <button class="btn" id="subagent-spawn" type="button">Spawn</button>
+                <button class="btn" id="subagent-refresh" type="button">Refresh</button>
+              </div>
+            </div>
+            <div class="settings-help">Spawn runs a background worker and reports back here.</div>
+            <div class="subagent-list" id="subagent-list" aria-live="polite"></div>
           </div>
         </div>
       </div>

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from nanobot.bus.events import InboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 from nanobot.agent.tools.registry import ToolRegistry
@@ -39,6 +40,7 @@ class SubagentManager:
         model: str | None = None,
         brave_api_key: str | None = None,
         exec_config: ExecToolConfig | None = None,
+        progress_interval_s: int = 15,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -48,6 +50,8 @@ class SubagentManager:
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        self._task_meta: dict[str, dict[str, Any]] = {}
+        self.progress_interval_s = max(int(progress_interval_s), 0)
     
     async def spawn(
         self,
@@ -56,37 +60,97 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
     ) -> str:
-        """
-        Spawn a subagent to execute a task in the background.
-        
-        Args:
-            task: The task description for the subagent.
-            label: Optional human-readable label for the task.
-            origin_channel: The channel to announce results to.
-            origin_chat_id: The chat ID to announce results to.
-        
-        Returns:
-            Status message indicating the subagent was started.
-        """
+        """Spawn a subagent to execute a task in the background."""
+        task_id, display_label = await self._spawn_with_id(
+            task=task,
+            label=label,
+            origin_channel=origin_channel,
+            origin_chat_id=origin_chat_id,
+        )
+        return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
+
+    async def spawn_task(
+        self,
+        task: str,
+        label: str | None,
+        origin_channel: str,
+        origin_chat_id: str,
+    ) -> dict[str, Any]:
+        """Spawn a subagent and return structured task info for control surfaces."""
+        task_id, display_label = await self._spawn_with_id(
+            task=task,
+            label=label,
+            origin_channel=origin_channel,
+            origin_chat_id=origin_chat_id,
+        )
+        meta = self._task_meta.get(task_id)
+        return {
+            "message": f"Subagent [{display_label}] started (id: {task_id}).",
+            "task": meta or {"id": task_id, "label": display_label, "task": task},
+        }
+
+    async def _spawn_with_id(
+        self,
+        *,
+        task: str,
+        label: str | None,
+        origin_channel: str,
+        origin_chat_id: str,
+    ) -> tuple[str, str]:
+        """Internal spawn helper that returns the task id and display label."""
         task_id = str(uuid.uuid4())[:8]
         display_label = label or task[:30] + ("..." if len(task) > 30 else "")
-        
+
         origin = {
             "channel": origin_channel,
             "chat_id": origin_chat_id,
         }
-        
-        # Create background task
+
+        started_at = time.time()
+        self._task_meta[task_id] = {
+            "id": task_id,
+            "label": display_label,
+            "task": task,
+            "origin": origin,
+            "status": "running",
+            "started_at": started_at,
+        }
+
         bg_task = asyncio.create_task(
             self._run_subagent(task_id, task, display_label, origin)
         )
         self._running_tasks[task_id] = bg_task
-        
-        # Cleanup when done
         bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
-        
+
         logger.info(f"Spawned subagent [{task_id}]: {display_label}")
-        return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
+        return task_id, display_label
+
+    def list_running(self) -> list[dict[str, Any]]:
+        """List currently running subagent tasks."""
+        items: list[dict[str, Any]] = []
+        for task_id in list(self._running_tasks.keys()):
+            meta = self._task_meta.get(task_id)
+            if meta:
+                items.append({
+                    "id": task_id,
+                    "label": meta.get("label") or "",
+                    "task": meta.get("task") or "",
+                    "status": meta.get("status") or "running",
+                    "started_at": meta.get("started_at") or 0,
+                })
+        return items
+
+    def cancel(self, task_id: str) -> bool:
+        """Cancel a running subagent task."""
+        task = self._running_tasks.get(task_id)
+        if not task:
+            return False
+        task.cancel()
+        meta = self._task_meta.get(task_id)
+        if meta:
+            meta["status"] = "cancelled"
+            meta["finished_at"] = time.time()
+        return True
     
     async def _run_subagent(
         self,
@@ -97,6 +161,14 @@ class SubagentManager:
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info(f"Subagent [{task_id}] starting task: {label}")
+
+        started_at = time.monotonic()
+        stop_status = asyncio.Event()
+        status_task: asyncio.Task[None] | None = None
+        if self.progress_interval_s > 0:
+            status_task = asyncio.create_task(
+                self._status_loop(label, origin, stop_status, started_at)
+            )
         
         try:
             # Build subagent tools (no message tool, no spawn tool)
@@ -183,12 +255,27 @@ class SubagentManager:
                 final_result = "Task completed but no final response was generated."
             
             logger.info(f"Subagent [{task_id}] completed successfully")
+            meta = self._task_meta.get(task_id)
+            if meta:
+                meta["status"] = "ok"
+                meta["finished_at"] = time.time()
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
             
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error(f"Subagent [{task_id}] failed: {e}")
+            meta = self._task_meta.get(task_id)
+            if meta:
+                meta["status"] = "error"
+                meta["finished_at"] = time.time()
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
+        finally:
+            stop_status.set()
+            if status_task is not None:
+                try:
+                    await status_task
+                except Exception:
+                    pass
     
     async def _announce_result(
         self,
@@ -221,6 +308,44 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
         
         await self.bus.publish_inbound(msg)
         logger.debug(f"Subagent [{task_id}] announced result to {origin['channel']}:{origin['chat_id']}")
+
+    async def _status_loop(
+        self,
+        label: str,
+        origin: dict[str, str],
+        stop_event: asyncio.Event,
+        started_at: float,
+    ) -> None:
+        """Periodically emit status updates while a subagent is running."""
+        while not stop_event.is_set():
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=self.progress_interval_s)
+                break
+            except asyncio.TimeoutError:
+                pass
+
+            if stop_event.is_set():
+                break
+
+            elapsed_s = int(time.monotonic() - started_at)
+            msg = OutboundMessage(
+                channel=origin["channel"],
+                chat_id=origin["chat_id"],
+                content=self._format_status_message(label, elapsed_s),
+                metadata={"type": "status"},
+            )
+            try:
+                await self.bus.publish_outbound(msg)
+            except Exception:
+                pass
+
+    def _format_status_message(self, label: str, elapsed_s: int) -> str:
+        minutes, seconds = divmod(max(elapsed_s, 0), 60)
+        if minutes:
+            elapsed = f"{minutes}m {seconds}s"
+        else:
+            elapsed = f"{seconds}s"
+        return f"Background task '{label}' still running ({elapsed})."
     
     def _build_subagent_prompt(self, task: str) -> str:
         """Build a focused system prompt for the subagent."""

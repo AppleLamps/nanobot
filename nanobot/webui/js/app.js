@@ -137,6 +137,7 @@ function openSettingsModal() {
   if (!dom.settingsModal) return;
   dom.settingsModal.classList.add("show");
   dom.settingsModal.setAttribute("aria-hidden", "false");
+  requestSubagents();
 }
 
 function closeSettingsModal() {
@@ -212,6 +213,35 @@ async function downloadLogs() {
   } catch (e) {
     const msg = String(e && e.message ? e.message : e);
     toastMsg("Failed to download logs." + (msg ? " " + msg : ""));
+  }
+}
+
+function requestSubagents() {
+  if (!state.ws || state.ws.readyState !== 1) return;
+  try {
+    state.ws.send(JSON.stringify({ type: "subagent_list" }));
+  } catch (_) { }
+}
+
+function spawnSubagent() {
+  if (!state.ws || state.ws.readyState !== 1) {
+    toastMsg("Not connected yet.");
+    return;
+  }
+  const task = String(dom.subagentTaskInput && dom.subagentTaskInput.value || "").trim();
+  const label = String(dom.subagentLabelInput && dom.subagentLabelInput.value || "").trim();
+  if (!task) {
+    toastMsg("Add a task to spawn.");
+    return;
+  }
+  try {
+    state.ws.send(JSON.stringify({ type: "subagent_spawn", task, label }));
+    if (dom.subagentTaskInput) dom.subagentTaskInput.value = "";
+    if (dom.subagentLabelInput) dom.subagentLabelInput.value = "";
+    toastMsg("Subagent spawned.");
+    setTimeout(requestSubagents, 400);
+  } catch (_) {
+    toastMsg("Failed to spawn subagent.");
   }
 }
 
@@ -343,6 +373,10 @@ if (dom.restrictWorkspaceToggle)
   dom.restrictWorkspaceToggle.addEventListener("change", applyRestrictWorkspace);
 if (dom.downloadLogsBtn)
   dom.downloadLogsBtn.addEventListener("click", downloadLogs);
+if (dom.subagentSpawnBtn)
+  dom.subagentSpawnBtn.addEventListener("click", spawnSubagent);
+if (dom.subagentRefreshBtn)
+  dom.subagentRefreshBtn.addEventListener("click", requestSubagents);
 
 /* Model */
 if (dom.applyModelBtn) dom.applyModelBtn.addEventListener("click", applyModel);

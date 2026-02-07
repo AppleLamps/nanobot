@@ -168,6 +168,23 @@ write_file(
 
 ---
 
+## Subagent Management
+
+Use background workers for long-running or parallel tasks.
+
+### Spawn a subagent
+
+```python
+spawn(task="Analyze the repo for TODOs", label="todo-scan")
+```
+
+### Track or cancel running subagents
+
+```python
+subagent_control(action="list")
+subagent_control(action="cancel", task_id="abcd1234")
+```
+
 ## Adding Custom Tools
 
 To add custom tools:

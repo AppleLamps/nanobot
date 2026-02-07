@@ -1,0 +1,108 @@
+/* Global Styles */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+:root {
+  /* Brand palette */
+  --brand-primary: #d32f2f;
+  --gray-50: #f9fafb;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-300: #d1d5db;
+  --gray-600: #4b5563;
+  --gray-700: #374151;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background: var(--gray-50);
+  color: var(--gray-700);
+  line-height: 1.7;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem;
+}
+
+/* Header & Navigation */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+header .brand {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--brand-primary);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+nav {
+  margin-top: 0.25rem;
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+nav a {
+  color: var(--gray-700);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 0.25rem 0;
+  transition: color 0.2s;
+}
+
+nav a:hover,
+nav a.active {
+  color: var(--brand-primary);
+}
+
+/* Hero */
+.hero {
+  background: linear-gradient(135deg, #fff, var(--gray-100));
+  border-left: 4px solid var(--brand-primary);
+  border-radius: 0.5rem;
+  padding: 2rem;
+  margin-top: 2rem;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+/* Updates */
+.sec-updates {
+  margin-top: 2.5rem;
+}
+
+.update-item {
+  background: #ffffff;
+  border: 1px solid var(--gray-200);
+  border-radius: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+}
+
+.date {
+  font-size: 0.85rem;
+  color: var(--gray-600);
+  font-weight: 600;
+}
+
+/* Footer */
+footer {
+  text-align: center;
+  font-size: 0.825rem;
+  color: var(--gray-600);
+  padding: 2rem 0;
+  margin-top: 3rem;
+  border-top: 1px solid var(--gray-200);
+}

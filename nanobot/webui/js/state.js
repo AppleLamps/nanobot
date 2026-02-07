@@ -31,6 +31,11 @@ export const dom = {
   verbositySelect: $("verbosity"),
   downloadLogsBtn: $("download-logs"),
   restrictWorkspaceToggle: $("restrict-workspace"),
+  subagentTaskInput: $("subagent-task"),
+  subagentLabelInput: $("subagent-label"),
+  subagentSpawnBtn: $("subagent-spawn"),
+  subagentRefreshBtn: $("subagent-refresh"),
+  subagentList: $("subagent-list"),
   clearBtn: $("clear"),
   newChatBtn: $("new-chat"),
   sessionsBtn: $("sessions"),
@@ -73,6 +78,7 @@ export const state = {
   restrictWorkspace: true,
   pendingNewChatDefaultVerbosity: false,
   pendingNewChatDefaultRestrictWorkspace: false,
+  subagents: [],
 };
 
 /* Utilities */

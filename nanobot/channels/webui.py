@@ -425,22 +425,31 @@ class WebUIChannel(BaseChannel):
             return
 
         msg_type = "assistant"
+        extra_data: dict[str, Any] | None = None
         try:
-            if isinstance(msg.metadata, dict) and msg.metadata.get("type") == "status":
-                msg_type = "status"
+            if isinstance(msg.metadata, dict) and isinstance(msg.metadata.get("type"), str):
+                msg_type = str(msg.metadata.get("type"))
+                extra_data = msg.metadata.get("data") if isinstance(msg.metadata.get("data"), dict) else None
         except Exception:
             msg_type = "assistant"
 
-        payload = json.dumps(
-            {"type": msg_type, "chat_id": str(msg.chat_id), "content": msg.content or "", "ts": time.time()}
-        )
+        payload = {
+            "type": msg_type,
+            "chat_id": str(msg.chat_id),
+            "content": msg.content or "",
+            "ts": time.time(),
+        }
+        if extra_data:
+            payload["data"] = extra_data
+
+        payload_json = json.dumps(payload)
 
         async with self._clients_lock:
             targets = list(self._by_chat.get(str(msg.chat_id), set()))
 
         for ws in targets:
             try:
-                await ws.send(payload)
+                await ws.send(payload_json)
             except Exception:
                 # Best-effort broadcast; dead sockets will be cleaned up on disconnect.
                 pass
@@ -467,11 +476,21 @@ class WebUIChannel(BaseChannel):
         key = _ClientKey(chat_id=str(chat_id), sender_id=str(sender_id), session_key=str(session_key))
 
         # Disconnect duplicate clients for the same session+sender.
+        # Remove old entries from tracking BEFORE closing, so _drop_client
+        # on the old ws is a no-op and the client-side close handler doesn't
+        # race with a half-cleaned state.
         to_close: list[Any] = []
         async with self._clients_lock:
             for old_ws, old_key in list(self._clients.items()):
                 if old_key.session_key == key.session_key and old_key.sender_id == key.sender_id:
                     to_close.append(old_ws)
+                    del self._clients[old_ws]
+                    s = self._by_chat.get(old_key.chat_id)
+                    if s:
+                        s.discard(old_ws)
+                        if not s:
+                            self._by_chat.pop(old_key.chat_id, None)
+                    self._uploads.pop(old_ws, None)
             self._clients[ws] = key
             self._by_chat.setdefault(key.chat_id, set()).add(ws)
             self._uploads.setdefault(ws, {})
@@ -686,6 +705,66 @@ class WebUIChannel(BaseChannel):
                 return
 
             await self._broadcast_settings(session_key=key.session_key)
+            return
+
+        if msg_type in ("subagent_list", "subagents"):
+            async with self._clients_lock:
+                key = self._clients.get(ws)
+            if key is None:
+                return
+            await self._handle_message(
+                sender_id=key.sender_id,
+                chat_id=key.chat_id,
+                content="",
+                metadata={
+                    "client": "webui",
+                    "session_key": key.session_key,
+                    "control": {"action": "subagent_list"},
+                },
+            )
+            return
+
+        if msg_type in ("subagent_spawn", "spawn_subagent"):
+            task = str(data.get("task") or "").strip()
+            label = str(data.get("label") or "").strip() if isinstance(data.get("label"), str) else ""
+            if not task:
+                await ws.send(json.dumps({"type": "error", "error": "missing task"}))
+                return
+            async with self._clients_lock:
+                key = self._clients.get(ws)
+            if key is None:
+                return
+            await self._handle_message(
+                sender_id=key.sender_id,
+                chat_id=key.chat_id,
+                content="",
+                metadata={
+                    "client": "webui",
+                    "session_key": key.session_key,
+                    "control": {"action": "subagent_spawn", "task": task, "label": label},
+                },
+            )
+            return
+
+        if msg_type in ("subagent_cancel", "cancel_subagent"):
+            task_id = str(data.get("task_id") or "").strip()
+            if not task_id:
+                await ws.send(json.dumps({"type": "error", "error": "missing task_id"}))
+                return
+            async with self._clients_lock:
+                key = self._clients.get(ws)
+            if key is None:
+                return
+            await self._handle_message(
+                sender_id=key.sender_id,
+                chat_id=key.chat_id,
+                content="",
+                metadata={
+                    "client": "webui",
+                    "session_key": key.session_key,
+                    "control": {"action": "subagent_cancel", "task_id": task_id},
+                },
+            )
             return
 
         if msg_type in ("upload_init",):

@@ -70,6 +70,34 @@
   color: var(--ink);
 }
 
+.settings-input {
+  flex: 1;
+  border: 1px solid rgba(20, 17, 15, 0.2);
+  background: rgba(251, 247, 241, 0.9);
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+}
+
+.settings-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-divider {
+  margin-top: 16px;
+  height: 1px;
+  background: rgba(20, 17, 15, 0.18);
+}
+
+.settings-subhead {
+  margin-top: 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
 .settings-select {
   appearance: none;
   border: 1px solid rgba(20, 17, 15, 0.2);
@@ -85,6 +113,50 @@
   margin-top: 8px;
   font-size: 12px;
   color: var(--ink3);
+}
+
+.subagent-list {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.subagent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(20, 17, 15, 0.18);
+  background: rgba(244, 238, 227, 0.6);
+}
+
+.subagent-item .meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.subagent-item .label {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.subagent-item .task {
+  font-size: 12px;
+  color: var(--ink3);
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-empty {
+  font-size: 12px;
+  color: var(--ink3);
+  padding: 6px 2px;
 }
 
 .sessionlist {

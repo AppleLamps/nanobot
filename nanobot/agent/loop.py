@@ -16,6 +16,7 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.subagent_control import SubagentControlTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
@@ -162,6 +163,7 @@ class AgentLoop:
                     restrict_to_workspace=restrict_workspace,
                 )
             )
+            reg.register(SubagentControlTool(manager=self.subagents))
             reg.register(WebSearchTool(api_key=self.brave_api_key))
             reg.register(WebFetchTool())
         else:
@@ -225,6 +227,7 @@ class AgentLoop:
         # Web tools
         self.tools.register(WebSearchTool(api_key=self.brave_api_key))
         self.tools.register(WebFetchTool())
+        self.tools.register(SubagentControlTool(manager=self.subagents))
 
         # Note: message/spawn tools are NOT registered on the base registry.
         # They are always created per-request in _build_tools_for_request() to avoid
@@ -251,6 +254,7 @@ class AgentLoop:
             "completion_tokens": usage.get("completion_tokens"),
             "total_tokens": usage.get("total_tokens"),
             "max_tokens": max_tokens_used,
+            "cost": usage.get("cost"),
         }
         history = session.metadata.get("usage_history") or []
         if not isinstance(history, list):
@@ -259,6 +263,10 @@ class AgentLoop:
         if len(history) > 20:
             history = history[-20:]
         session.metadata["usage_history"] = history
+
+        cost = usage.get("cost")
+        if cost is not None:
+            session.metadata["session_cost"] = (session.metadata.get("session_cost") or 0) + cost
 
         prompt_tokens = usage.get("prompt_tokens") or 0
         peak = session.metadata.get("prompt_tokens_peak") or 0
@@ -432,6 +440,7 @@ class AgentLoop:
         final_content: str | None = None
         tool_error_streak = 0
         last_status_ts = 0.0
+        nudged_for_response = False
 
         chosen_model = (model or "").strip() or self.model
 
@@ -517,6 +526,18 @@ class AgentLoop:
                 response.usage.get("completion_tokens") if response.usage else None,
                 max_tokens_used,
             )
+
+            # Some models return content=None without tool calls when they
+            # consider the task "done".  Nudge once to get a text summary.
+            if not nudged_for_response and (final_content is None or not final_content.strip()) and iteration < self.max_iterations:
+                nudged_for_response = True
+                messages.append({
+                    "role": "user",
+                    "content": "Please reply with a brief summary of what you did.",
+                })
+                final_content = None
+                continue
+
             break
 
         if final_content is None:
@@ -534,6 +555,10 @@ class AgentLoop:
         # The chat_id contains the original "channel:chat_id" to route back to.
         if msg.channel == "system":
             return await self._process_system_message(msg)
+
+        control_response = await self._process_control_message(msg)
+        if control_response is not None:
+            return control_response
 
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}")
 
@@ -605,6 +630,62 @@ class AgentLoop:
             chat_id=msg.chat_id,
             content=final_content,
         )
+
+    async def _process_control_message(self, msg: InboundMessage) -> OutboundMessage | None:
+        """Handle non-LLM control messages (WebUI subagent controls)."""
+        if not isinstance(msg.metadata, dict):
+            return None
+        control = msg.metadata.get("control")
+        if not isinstance(control, dict):
+            return None
+        if msg.channel != "webui":
+            return None
+
+        action = str(control.get("action") or "").strip().lower()
+        if action == "subagent_list":
+            tasks = self.subagents.list_running()
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="",
+                metadata={"type": "subagents", "data": {"tasks": tasks}},
+            )
+        if action == "subagent_spawn":
+            task = str(control.get("task") or "").strip()
+            if not task:
+                return OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content="Missing task.",
+                    metadata={"type": "subagent_event", "data": {"ok": False}},
+                )
+            label = str(control.get("label") or "").strip() or None
+            result = await self.subagents.spawn_task(
+                task=task,
+                label=label,
+                origin_channel=msg.channel,
+                origin_chat_id=msg.chat_id,
+            )
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content=result.get("message") or "",
+                metadata={"type": "subagent_event", "data": {"ok": True, **result}},
+            )
+        if action == "subagent_cancel":
+            task_id = str(control.get("task_id") or "").strip()
+            ok = self.subagents.cancel(task_id) if task_id else False
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="",
+                metadata={
+                    "type": "subagent_event",
+                    "data": {"ok": ok, "task_id": task_id},
+                },
+            )
+
+        return None
 
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
         """Process a system message (e.g., subagent announce)."""
