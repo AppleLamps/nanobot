@@ -20,6 +20,7 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import FirecrawlScrapeTool, WebSearchTool, WebFetchTool
 
 if TYPE_CHECKING:
+    from nanobot.agent.context import ContextBuilder
     from nanobot.config.schema import ExecToolConfig
 
 
@@ -42,6 +43,8 @@ class SubagentManager:
         firecrawl_api_key: str | None = None,
         exec_config: ExecToolConfig | None = None,
         progress_interval_s: int = 15,
+        context_builder: ContextBuilder | None = None,
+        subagent_timeout_s: int = 300,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -54,6 +57,8 @@ class SubagentManager:
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._task_meta: dict[str, dict[str, Any]] = {}
         self.progress_interval_s = max(int(progress_interval_s), 0)
+        self._context_builder = context_builder
+        self.subagent_timeout_s = max(int(subagent_timeout_s), 0)
     
     async def spawn(
         self,
@@ -62,6 +67,7 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         model: str | None = None,
+        context: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
         task_id, display_label = await self._spawn_with_id(
@@ -70,6 +76,7 @@ class SubagentManager:
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
             model=model,
+            context=context,
         )
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
 
@@ -80,6 +87,7 @@ class SubagentManager:
         origin_channel: str,
         origin_chat_id: str,
         model: str | None = None,
+        context: str | None = None,
     ) -> dict[str, Any]:
         """Spawn a subagent and return structured task info for control surfaces."""
         task_id, display_label = await self._spawn_with_id(
@@ -88,6 +96,7 @@ class SubagentManager:
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
             model=model,
+            context=context,
         )
         meta = self._task_meta.get(task_id)
         return {
@@ -103,6 +112,7 @@ class SubagentManager:
         origin_channel: str,
         origin_chat_id: str,
         model: str | None = None,
+        context: str | None = None,
     ) -> tuple[str, str]:
         """Internal spawn helper that returns the task id and display label."""
         task_id = str(uuid.uuid4())[:8]
@@ -127,7 +137,7 @@ class SubagentManager:
         }
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, effective_model)
+            self._run_subagent(task_id, task, display_label, origin, effective_model, context)
         )
         self._running_tasks[task_id] = bg_task
         bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
@@ -169,6 +179,7 @@ class SubagentManager:
         label: str,
         origin: dict[str, str],
         model: str | None = None,
+        context: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info(f"Subagent [{task_id}] starting task: {label}")
@@ -208,71 +219,48 @@ class SubagentManager:
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             tools.register(WebFetchTool())
             tools.register(FirecrawlScrapeTool(api_key=self.firecrawl_api_key))
-            
+
             # Build messages with subagent-specific prompt
-            system_prompt = self._build_subagent_prompt(task)
+            system_prompt = self._build_subagent_prompt(task, context=context)
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
             ]
-            
-            # Run agent loop (limited iterations)
-            max_iterations = 15
-            iteration = 0
-            final_result: str | None = None
-            
-            while iteration < max_iterations:
-                iteration += 1
-                
-                response = await self.provider.chat(
-                    messages=messages,
-                    tools=tools.get_definitions(),
-                    model=model or self.model,
-                )
-                
-                if response.has_tool_calls:
-                    # Add assistant message with tool calls
-                    tool_call_dicts = [
-                        {
-                            "id": tc.id,
-                            "type": "function",
-                            "function": {
-                                "name": tc.name,
-                                "arguments": json.dumps(tc.arguments),
-                            },
-                        }
-                        for tc in response.tool_calls
-                    ]
-                    messages.append({
-                        "role": "assistant",
-                        "content": response.content or "",
-                        "tool_calls": tool_call_dicts,
-                    })
-                    
-                    # Execute tools
-                    results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
-                    for tool_call, result in zip(response.tool_calls, results):
-                        logger.debug(f"Subagent [{task_id}] executing: {tool_call.name}")
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "name": tool_call.name,
-                            "content": result,
-                        })
-                else:
-                    final_result = response.content
-                    break
-            
-            if final_result is None:
-                final_result = "Task completed but no final response was generated."
-            
+
+            # Run agent loop (limited iterations), with overall timeout
+            timeout = self.subagent_timeout_s if self.subagent_timeout_s > 0 else None
+            final_result = await asyncio.wait_for(
+                self._run_tool_loop(task_id, messages, tools, model),
+                timeout=timeout,
+            )
+
             logger.info(f"Subagent [{task_id}] completed successfully")
             meta = self._task_meta.get(task_id)
             if meta:
                 meta["status"] = "ok"
                 meta["finished_at"] = time.time()
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
-            
+
+        except asyncio.TimeoutError:
+            timeout_s = self.subagent_timeout_s
+            error_msg = f"Error: Subagent timed out after {timeout_s}s"
+            logger.error(f"Subagent [{task_id}] timed out after {timeout_s}s")
+            meta = self._task_meta.get(task_id)
+            if meta:
+                meta["status"] = "timeout"
+                meta["finished_at"] = time.time()
+            await self._announce_result(task_id, label, task, error_msg, origin, "error")
+
+        except asyncio.CancelledError:
+            logger.info(f"Subagent [{task_id}] cancelled")
+            meta = self._task_meta.get(task_id)
+            if meta:
+                meta["status"] = "cancelled"
+                meta["finished_at"] = time.time()
+            await self._announce_result(
+                task_id, label, task, "Task was cancelled.", origin, "error"
+            )
+
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error(f"Subagent [{task_id}] failed: {e}")
@@ -289,6 +277,63 @@ class SubagentManager:
                 except Exception:
                     pass
     
+    async def _run_tool_loop(
+        self,
+        task_id: str,
+        messages: list[dict[str, Any]],
+        tools: ToolRegistry,
+        model: str | None,
+    ) -> str:
+        """Inner tool loop for a subagent. Returns the final text result."""
+        max_iterations = 15
+        iteration = 0
+        final_result: str | None = None
+
+        while iteration < max_iterations:
+            iteration += 1
+
+            response = await self.provider.chat(
+                messages=messages,
+                tools=tools.get_definitions(),
+                model=model or self.model,
+            )
+
+            if response.has_tool_calls:
+                tool_call_dicts = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in response.tool_calls
+                ]
+                messages.append({
+                    "role": "assistant",
+                    "content": response.content or "",
+                    "tool_calls": tool_call_dicts,
+                })
+
+                results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
+                for tool_call, result in zip(response.tool_calls, results):
+                    logger.debug(f"Subagent [{task_id}] executing: {tool_call.name}")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": tool_call.name,
+                        "content": result,
+                    })
+            else:
+                final_result = response.content
+                break
+
+        if final_result is None:
+            final_result = "Task completed but no final response was generated."
+
+        return final_result
+
     async def _announce_result(
         self,
         task_id: str,
@@ -359,17 +404,31 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
             elapsed = f"{seconds}s"
         return f"Background task '{label}' still running ({elapsed})."
     
-    def _build_subagent_prompt(self, task: str) -> str:
-        """Build a focused system prompt for the subagent."""
-        return f"""# Subagent
+    def _build_subagent_prompt(self, task: str, *, context: str | None = None) -> str:
+        """Build a focused system prompt for the subagent.
+
+        When a ``ContextBuilder`` is available, the prompt is enriched with
+        bootstrap files, memory retrieval, and skills summary so the subagent
+        has the same workspace knowledge as the main agent.  When no builder
+        is set (backward-compat), a minimal identity-only prompt is returned.
+        """
+        from datetime import datetime
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
+
+        # --- 1. Identity (always present) ---
+        identity = f"""# Subagent
 
 You are a subagent spawned by the main agent to complete a specific task.
+Follow the project conventions described below.
+
+Current time: {now}
 
 ## Your Task
 {task}
 
 ## Rules
-1. Stay focused - complete only the assigned task, nothing else
+1. Stay focused — complete only the assigned task, nothing else
 2. Your final response will be reported back to the main agent
 3. Do not initiate conversations or take on side tasks
 4. Be concise but informative in your findings
@@ -383,12 +442,57 @@ You are a subagent spawned by the main agent to complete a specific task.
 ## What You Cannot Do
 - Send messages directly to users (no message tool available)
 - Spawn other subagents
-- Access the main agent's conversation history
 
 ## Workspace
 Your workspace is at: {self.workspace}
 
 When you have completed the task, provide a clear summary of your findings or actions."""
+
+        if self._context_builder is None:
+            return identity
+
+        sections: list[str] = [identity]
+
+        # --- 2. Bootstrap files (budget: 2000 chars) ---
+        try:
+            bootstrap = self._context_builder._get_bootstrap_content()
+            if bootstrap:
+                sections.append(bootstrap[:2000])
+        except Exception:
+            pass
+
+        # --- 3. Memory (budget: 2000 chars) ---
+        try:
+            memory = self._context_builder._get_memory_section(
+                session_key=None,
+                memory_scope="global",
+                memory_key=None,
+                current_message=task,
+                history=[],
+            )
+            if memory:
+                sections.append(memory[:2000])
+        except Exception:
+            pass
+
+        # --- 4. Skills summary (budget: 3000 chars) ---
+        try:
+            skills = self._context_builder._get_skills_summary()
+            if skills:
+                skills_section = (
+                    "# Skills\n\n"
+                    "You can read a skill's SKILL.md file to learn how to use it.\n\n"
+                    + skills
+                )
+                sections.append(skills_section[:3000])
+        except Exception:
+            pass
+
+        # --- 5. Spawn context (budget: 1000 chars) ---
+        if context:
+            sections.append("# Conversation Context\n\n" + context[:1000])
+
+        return "\n\n---\n\n".join(sections)
     
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""

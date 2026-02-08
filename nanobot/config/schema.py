@@ -107,6 +107,7 @@ class AgentDefaults(BaseModel):
     memory_max_chars: int = 6000
     skills_max_chars: int = 12000
     bootstrap_max_chars: int = 4000
+    history_max_chars: int = 80000
     # Tool error backoff
     tool_error_backoff: int = 3
     # Auto-tune response length
@@ -265,6 +266,47 @@ class Config(BaseSettings):
             return cfg.api_base or "https://openrouter.ai/api/v1"
         return cfg.api_base
     
+    def validate_provider(self) -> list[str]:
+        """Check for common provider misconfiguration. Returns a list of warnings."""
+        warnings_list: list[str] = []
+        model = (self.agents.defaults.model or "").strip()
+        name, cfg = self._select_provider()
+
+        if not name and not model.startswith("bedrock/"):
+            warnings_list.append(
+                "No API key configured for any provider. "
+                "Set one via `nanobot onboard` or in config.json."
+            )
+            return warnings_list
+
+        if not model:
+            return warnings_list
+
+        # Check model prefix vs selected provider.
+        prefix_to_provider: dict[str, str] = {
+            "openai": "openai",
+            "anthropic": "anthropic",
+            "gemini": "gemini",
+            "groq": "groq",
+            "zhipu": "zhipu",
+            "zai": "zhipu",
+            "hosted_vllm": "vllm",
+            "bedrock": "bedrock",
+        }
+        if "/" in model:
+            model_prefix = model.split("/", 1)[0].strip().lower()
+            expected = prefix_to_provider.get(model_prefix)
+            # Only warn for non-openrouter providers where the model prefix
+            # suggests a direct provider but a different one was selected.
+            if expected and name and name != "openrouter" and expected != name:
+                warnings_list.append(
+                    f"Model '{model}' looks like a {expected} model, "
+                    f"but the active provider is '{name}'. "
+                    f"This may cause errors. Check your API keys or model setting."
+                )
+
+        return warnings_list
+
     class Config:
         env_prefix = "NANOBOT_"
         env_nested_delimiter = "__"

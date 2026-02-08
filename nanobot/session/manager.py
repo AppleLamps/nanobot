@@ -140,25 +140,44 @@ class SessionManager:
             messages: list[dict[str, Any]] = []
             metadata: dict[str, Any] = {}
             created_at = None
+            skipped = 0
 
             with self._lock_for(path):
                 with open(path, "r", encoding="utf-8", errors="replace") as f:
-                    for line in f:
+                    for lineno, line in enumerate(f, 1):
                         line = line.strip()
                         if not line:
                             continue
 
-                        data = json.loads(line)
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            skipped += 1
+                            logger.warning(f"Session {key}: skipped malformed line {lineno}")
+                            continue
+
+                        if not isinstance(data, dict):
+                            skipped += 1
+                            continue
 
                         if data.get("_type") == "metadata":
                             metadata = data.get("metadata", {})
+                            if not isinstance(metadata, dict):
+                                metadata = {}
                             created_at = (
                                 datetime.fromisoformat(data["created_at"])
                                 if data.get("created_at")
                                 else None
                             )
                         else:
-                            messages.append(data)
+                            # Validate message has required fields.
+                            if data.get("role") and data.get("content") is not None:
+                                messages.append(data)
+                            else:
+                                skipped += 1
+
+            if skipped:
+                logger.warning(f"Session {key}: {skipped} invalid line(s) skipped during load")
 
             return Session(
                 key=key,
@@ -184,31 +203,40 @@ class SessionManager:
         await asyncio.to_thread(self._save_to_disk, session)
         self._cache[session.key] = session
 
-    def _save_to_disk(self, session: Session) -> None:
-        """Synchronous save implementation (atomic write + fsync)."""
+    def _save_to_disk(self, session: Session, _max_retries: int = 2) -> None:
+        """Synchronous save implementation (atomic write + fsync) with retry."""
         path = self._get_session_path(session.key)
-
         tmp_path = Path(str(path) + ".tmp")
-        with self._lock_for(path):
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                # Write metadata first
-                metadata_line = {
-                    "_type": "metadata",
-                    "key": session.key,
-                    "created_at": session.created_at.isoformat(),
-                    "updated_at": session.updated_at.isoformat(),
-                    "metadata": session.metadata,
-                }
-                f.write(json.dumps(metadata_line) + "\n")
 
-                # Write messages
-                for msg in session.messages:
-                    f.write(json.dumps(msg) + "\n")
-                f.flush()
-                os.fsync(f.fileno())
+        last_err: Exception | None = None
+        for attempt in range(_max_retries + 1):
+            try:
+                with self._lock_for(path):
+                    with open(tmp_path, "w", encoding="utf-8") as f:
+                        metadata_line = {
+                            "_type": "metadata",
+                            "key": session.key,
+                            "created_at": session.created_at.isoformat(),
+                            "updated_at": session.updated_at.isoformat(),
+                            "metadata": session.metadata,
+                        }
+                        f.write(json.dumps(metadata_line) + "\n")
 
-            # Atomic replace to avoid torn writes.
-            os.replace(tmp_path, path)
+                        for msg in session.messages:
+                            f.write(json.dumps(msg) + "\n")
+                        f.flush()
+                        os.fsync(f.fileno())
+
+                    os.replace(tmp_path, path)
+                return  # success
+            except Exception as e:
+                last_err = e
+                logger.warning(f"Session save attempt {attempt + 1} failed for {session.key}: {e}")
+                if attempt < _max_retries:
+                    import time as _time
+                    _time.sleep(0.1 * (attempt + 1))
+
+        logger.error(f"Session save failed after {_max_retries + 1} attempts for {session.key}: {last_err}")
     
     def delete(self, key: str) -> bool:
         """

@@ -5,6 +5,8 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.memory_db import MemoryDB
 from nanobot.agent.skills import SkillsLoader
@@ -26,12 +28,14 @@ class ContextBuilder:
         memory_max_chars: int = 6000,
         skills_max_chars: int = 12000,
         bootstrap_max_chars: int = 4000,
+        history_max_chars: int = 80000,
     ):
         self.workspace = workspace
         self.skills = SkillsLoader(workspace)
         self.memory_max_chars = max(int(memory_max_chars), 0)
         self.skills_max_chars = max(int(skills_max_chars), 0)
         self.bootstrap_max_chars = max(int(bootstrap_max_chars), 0)
+        self.history_max_chars = max(int(history_max_chars), 0)
         self._cache: dict[str, tuple[tuple, str]] = {}
         self._memory_db: MemoryDB | None = None
 
@@ -230,6 +234,49 @@ When remembering something important, write to the memory file above."""
             return text
         return f"[truncated {label} to first {max_chars} chars]\n" + text[:max_chars]
 
+    def _trim_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Trim history from the front so total character count fits within budget.
+
+        When messages are dropped, a synthetic user message is prepended to
+        inform the LLM that earlier context was omitted.
+        """
+        if self.history_max_chars <= 0 or not history:
+            return history
+
+        def _msg_chars(m: dict[str, Any]) -> int:
+            c = m.get("content")
+            if isinstance(c, str):
+                return len(c)
+            if isinstance(c, list):
+                return sum(len(str(p.get("text", ""))) for p in c if isinstance(p, dict))
+            return 0
+
+        total = sum(_msg_chars(m) for m in history)
+        if total <= self.history_max_chars:
+            return history
+
+        # Drop oldest messages until we fit.
+        trimmed = list(history)
+        dropped = 0
+        while trimmed and total > self.history_max_chars:
+            total -= _msg_chars(trimmed[0])
+            trimmed.pop(0)
+            dropped += 1
+
+        logger.info(
+            f"History trimmed: dropped {dropped} message(s), "
+            f"{len(trimmed)} remaining ({total} chars)"
+        )
+        note = {
+            "role": "user",
+            "content": (
+                f"[System note: {dropped} earlier message(s) were omitted "
+                "because the conversation exceeded the context budget. "
+                "Focus on the remaining messages.]"
+            ),
+        }
+        return [note] + trimmed
+
     def _get_bootstrap_content(self) -> str:
         """Load bootstrap files from workspace with caching and truncation."""
         files: list[tuple[str, float]] = []
@@ -332,8 +379,10 @@ When remembering something important, write to the memory file above."""
             deduped.append(h)
 
         if not deduped:
+            logger.debug("Memory retrieval: 0 hits")
             return ""
 
+        logger.debug(f"Memory retrieval: {len(deduped)} hit(s) from {len(scopes)} scope(s)")
         lines = ["# Memory (Retrieved)", ""]
         for h in deduped:
             cleaned = h.strip().replace("\n", " ")
@@ -515,8 +564,9 @@ Skills with available="false" need dependencies installed first - you can try in
         )
         messages.append({"role": "system", "content": system_prompt})
 
-        # History
-        messages.extend(history)
+        # History — trim oldest messages when total chars exceeds budget
+        trimmed_history = self._trim_history(history)
+        messages.extend(trimmed_history)
 
         # Current message (with optional image attachments)
         user_content = self._build_user_content(current_message, media)

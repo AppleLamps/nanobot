@@ -38,7 +38,11 @@ class ReadFileTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Read the contents of a file at the given path."
+        return (
+            "Read the contents of a file. "
+            "Paths can be relative (resolved from workspace root) or absolute. "
+            "Returns the full UTF-8 text content."
+        )
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -106,7 +110,11 @@ class WriteFileTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Write content to a file at the given path. Creates parent directories if needed."
+        return (
+            "Write content to a file. Creates parent directories if needed. "
+            "Overwrites the file if it already exists. "
+            "Use edit_file instead when you only need to change part of a file."
+        )
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -156,7 +164,12 @@ class EditFileTool(Tool):
     
     @property
     def description(self) -> str:
-        return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
+        return (
+            "Edit a file by replacing old_text with new_text. "
+            "old_text must match exactly (including whitespace/indentation) and "
+            "must appear exactly once in the file. If it appears multiple times, "
+            "include more surrounding context to make it unique."
+        )
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -227,7 +240,10 @@ class ListDirTool(Tool):
     
     @property
     def description(self) -> str:
-        return "List the contents of a directory."
+        return (
+            "List the immediate contents of a directory (files and subdirectories). "
+            "Does not recurse into subdirectories."
+        )
     
     @property
     def parameters(self) -> dict[str, Any]:

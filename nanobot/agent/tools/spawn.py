@@ -42,7 +42,8 @@ class SpawnTool(Tool):
             "USE THIS FOR MOST TASKS — any work requiring 2+ tool calls "
             "(web searches, file ops, commands, research, multi-step work). "
             "The subagent runs asynchronously with full tool access and reports back when done. "
-            "This keeps you responsive for conversation while work happens in background."
+            "This keeps you responsive for conversation while work happens in background. "
+            "Use the 'context' parameter to pass relevant conversation details the subagent will need."
         )
     
     @property
@@ -58,11 +59,20 @@ class SpawnTool(Tool):
                     "type": "string",
                     "description": "Optional short label for the task (for display)",
                 },
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "Relevant context from the conversation to help "
+                        "the subagent understand the task"
+                    ),
+                },
             },
             "required": ["task"],
         }
     
-    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self, task: str, label: str | None = None, context: str | None = None, **kwargs: Any
+    ) -> str:
         """Spawn a subagent to execute the given task."""
         return await self._manager.spawn(
             task=task,
@@ -70,4 +80,5 @@ class SpawnTool(Tool):
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
             model=self._model,
+            context=context,
         )

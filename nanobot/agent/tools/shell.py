@@ -69,8 +69,11 @@ class ExecTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Execute a shell command and return its output. "
-            "Not a sandbox; best-effort safety checks only."
+            "Execute a shell command and return stdout/stderr. "
+            f"Commands time out after {self.timeout}s. "
+            "Output is truncated at 10000 chars. "
+            "Destructive commands (rm -rf, format, etc.) are blocked. "
+            "API keys are stripped from the subprocess environment."
         )
     
     @property

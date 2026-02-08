@@ -91,6 +91,7 @@ class AgentLoop:
             memory_max_chars=cfg.memory_max_chars,
             skills_max_chars=cfg.skills_max_chars,
             bootstrap_max_chars=cfg.bootstrap_max_chars,
+            history_max_chars=cfg.history_max_chars,
         )
         self.sessions = SessionManager(workspace)
 
@@ -106,6 +107,7 @@ class AgentLoop:
             brave_api_key=brave_api_key,
             firecrawl_api_key=firecrawl_api_key,
             exec_config=self.exec_config,
+            context_builder=self.context,
         )
 
         self._running = False
@@ -449,6 +451,7 @@ class AgentLoop:
         last_tool_error: tuple[str, str] | None = None
         last_status_ts = 0.0
         nudged_for_response = False
+        loop_start = time.monotonic()
 
         chosen_model = (model or "").strip() or self.model
 
@@ -457,12 +460,23 @@ class AgentLoop:
 
             max_tokens_used = self._get_session_max_tokens(session)
 
+            llm_start = time.monotonic()
             response = await self.provider.chat(
                 messages=messages,
                 tools=tools.get_definitions(),
                 model=chosen_model,
                 max_tokens=max_tokens_used,
                 temperature=self.temperature,
+            )
+            llm_ms = int((time.monotonic() - llm_start) * 1000)
+
+            prompt_tokens = (response.usage or {}).get("prompt_tokens", 0)
+            completion_tokens = (response.usage or {}).get("completion_tokens", 0)
+            cost = (response.usage or {}).get("cost")
+            logger.debug(
+                f"LLM call #{iteration}: {llm_ms}ms, "
+                f"prompt={prompt_tokens} completion={completion_tokens}"
+                + (f" cost=${cost:.4f}" if cost else "")
             )
 
             self._record_usage(session, response.usage, max_tokens_used)
@@ -503,7 +517,11 @@ class AgentLoop:
                             last_status_ts,
                             min_interval_s=min_interval,
                         )
+                tools_start = time.monotonic()
                 results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
+                tools_ms = int((time.monotonic() - tools_start) * 1000)
+                tool_names = [tc.name for tc in response.tool_calls]
+                logger.debug(f"Tools executed: {tool_names} in {tools_ms}ms")
                 for tool_call, result in zip(response.tool_calls, results):
                     messages = self.context.add_tool_result(
                         messages,
@@ -560,6 +578,9 @@ class AgentLoop:
 
         if final_content is None:
             final_content = no_response_message
+
+        loop_ms = int((time.monotonic() - loop_start) * 1000)
+        logger.info(f"Tool loop finished: {iteration} iteration(s) in {loop_ms}ms")
 
         return final_content
 

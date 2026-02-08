@@ -636,7 +636,10 @@ def gateway(
         from nanobot.config.loader import get_config_path
         console.print(f"Set one in {get_config_path()} under providers.openrouter.apiKey")
         raise typer.Exit(1)
-    
+
+    for w in config.validate_provider():
+        console.print(f"[yellow]Warning: {w}[/yellow]")
+
     provider = OpenRouterProvider(
         api_key=api_key,
         api_base=api_base,
@@ -644,7 +647,7 @@ def gateway(
         provider=config.agents.defaults.provider,
         fallback_models=config.agents.defaults.fallback_models or [],
     )
-    
+
     # Create agent
     agent = AgentLoop(
         bus=bus,
@@ -809,6 +812,9 @@ def agent(
     if not api_key and not is_bedrock:
         console.print("[red]Error: No API key configured.[/red]")
         raise typer.Exit(1)
+
+    for w in config.validate_provider():
+        console.print(f"[yellow]Warning: {w}[/yellow]")
 
     bus = MessageBus()
     provider = OpenRouterProvider(

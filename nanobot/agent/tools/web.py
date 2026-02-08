@@ -47,7 +47,11 @@ class WebSearchTool(Tool):
     """Search the web using Brave Search API."""
     
     name = "web_search"
-    description = "Search the web. Returns titles, URLs, and snippets."
+    description = (
+        "Search the web using Brave Search. Returns titles, URLs, and snippets. "
+        "Default 5 results (max 10). Requires BRAVE_API_KEY. "
+        "Results are cached for 5 minutes."
+    )
     parallel_safe = True
     cacheable = True
     cache_ttl_s = 300.0
@@ -101,7 +105,12 @@ class WebFetchTool(Tool):
     cacheable = True
     cache_ttl_s = 600.0
     max_retries = 1
-    description = "Fetch URL and extract readable content (HTML → markdown/text)."
+    description = (
+        "Fetch a URL and extract readable content (HTML → markdown or plain text). "
+        "Automatically follows redirects (up to 5). "
+        "Default max 50000 chars; use maxChars to limit. "
+        "Results are cached for 10 minutes. Supports HTML, JSON, and plain text."
+    )
     parameters = {
         "type": "object",
         "properties": {

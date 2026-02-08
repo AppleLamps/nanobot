@@ -21,6 +21,7 @@ build/
 .python-version
 .mypy_cache/
 .pytest_cache/
+.pytest_tmp/
 .ruff_cache/
 .tox/
 .coverage
@@ -36,6 +37,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Claude Code
+.claude/settings.local.json
 
 # OS/Editor
 .DS_Store
