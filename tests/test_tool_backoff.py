@@ -160,25 +160,18 @@ async def test_tool_error_backoff_resets_on_success(tmp_path, monkeypatch) -> No
     )
 
 
-async def test_system_message_tool_backoff_uses_system_wording(tmp_path, monkeypatch) -> None:
+async def test_system_message_uses_lightweight_announce(tmp_path, monkeypatch) -> None:
+    """System messages (subagent announces) use a single lightweight LLM call with no tools."""
     monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path))
 
     bus = MessageBus()
     provider = _SeqProvider(
         [
-            LLMResponse(
-                content=None,
-                tool_calls=[ToolCallRequest(id="t1", name="always_error", arguments={})],
-            ),
-            LLMResponse(
-                content=None,
-                tool_calls=[ToolCallRequest(id="t2", name="always_error", arguments={})],
-            ),
+            LLMResponse(content="Here is the summary.", tool_calls=[]),
         ]
     )
     cfg = AgentDefaults(max_tool_iterations=10, tool_error_backoff=2)
     loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path, agent_config=cfg)
-    loop.tools.register(_AlwaysErrorTool())
 
     msg = InboundMessage(
         channel="system",
@@ -188,13 +181,9 @@ async def test_system_message_tool_backoff_uses_system_wording(tmp_path, monkeyp
     )
     out = await loop._process_message(msg)
 
-    assert provider.calls == 2
+    assert provider.calls == 1
     assert out is not None
-    assert out.content == (
-        "Background task hit repeated tool errors. "
-        "Please rephrase or provide more specific inputs."
-        "\n\nLast tool error (always_error): Error: tool failed"
-    )
+    assert out.content == "Here is the summary."
 
 
 async def test_tool_error_backoff_counts_warnings(tmp_path, monkeypatch) -> None:

@@ -3,7 +3,8 @@
     "allow": [
       "WebFetch(domain:openrouter.ai)",
       "Bash(python -m pytest:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(python -m ruff check:*)"
     ]
   }
 }

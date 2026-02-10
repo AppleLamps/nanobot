@@ -11,13 +11,14 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.web import FirecrawlScrapeTool, WebFetchTool, WebSearchTool
+from nanobot.agent.utils import is_tool_error
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import FirecrawlScrapeTool, WebSearchTool, WebFetchTool
 
 if TYPE_CHECKING:
     from nanobot.agent.context import ContextBuilder
@@ -45,6 +46,9 @@ class SubagentManager:
         progress_interval_s: int = 15,
         context_builder: ContextBuilder | None = None,
         subagent_timeout_s: int = 300,
+        tool_error_backoff: int = 3,
+        subagent_bootstrap_chars: int = 3000,
+        subagent_context_chars: int = 3000,
     ):
         from nanobot.config.schema import ExecToolConfig
         self.provider = provider
@@ -59,6 +63,10 @@ class SubagentManager:
         self.progress_interval_s = max(int(progress_interval_s), 0)
         self._context_builder = context_builder
         self.subagent_timeout_s = max(int(subagent_timeout_s), 0)
+        self.tool_error_backoff = max(int(tool_error_backoff), 0)
+        self._max_completed_tasks = 50
+        self.subagent_bootstrap_chars = max(int(subagent_bootstrap_chars), 500)
+        self.subagent_context_chars = max(int(subagent_context_chars), 500)
     
     async def spawn(
         self,
@@ -66,7 +74,6 @@ class SubagentManager:
         label: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
-        model: str | None = None,
         context: str | None = None,
     ) -> str:
         """Spawn a subagent to execute a task in the background."""
@@ -75,7 +82,6 @@ class SubagentManager:
             label=label,
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
-            model=model,
             context=context,
         )
         return f"Subagent [{display_label}] started (id: {task_id}). I'll notify you when it completes."
@@ -86,7 +92,6 @@ class SubagentManager:
         label: str | None,
         origin_channel: str,
         origin_chat_id: str,
-        model: str | None = None,
         context: str | None = None,
     ) -> dict[str, Any]:
         """Spawn a subagent and return structured task info for control surfaces."""
@@ -95,7 +100,6 @@ class SubagentManager:
             label=label,
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
-            model=model,
             context=context,
         )
         meta = self._task_meta.get(task_id)
@@ -111,7 +115,6 @@ class SubagentManager:
         label: str | None,
         origin_channel: str,
         origin_chat_id: str,
-        model: str | None = None,
         context: str | None = None,
     ) -> tuple[str, str]:
         """Internal spawn helper that returns the task id and display label."""
@@ -122,9 +125,6 @@ class SubagentManager:
             "channel": origin_channel,
             "chat_id": origin_chat_id,
         }
-
-        # Use the per-session model override if provided, otherwise fall back to default.
-        effective_model = (model or "").strip() or self.model
 
         started_at = time.time()
         self._task_meta[task_id] = {
@@ -137,7 +137,7 @@ class SubagentManager:
         }
 
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, effective_model, context)
+            self._run_subagent(task_id, task, display_label, origin, context)
         )
         self._running_tasks[task_id] = bg_task
         bg_task.add_done_callback(lambda _: self._running_tasks.pop(task_id, None))
@@ -171,6 +171,28 @@ class SubagentManager:
             meta["status"] = "cancelled"
             meta["finished_at"] = time.time()
         return True
+
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        """Return full metadata for a task (including result and usage), or None."""
+        return self._task_meta.get(task_id)
+
+    def list_all(self) -> list[dict[str, Any]]:
+        """List all tasks including completed ones."""
+        return list(self._task_meta.values())
+
+    def _prune_completed_meta(self) -> None:
+        """Evict oldest completed task metadata when count exceeds limit."""
+        completed = [
+            (tid, m)
+            for tid, m in self._task_meta.items()
+            if m.get("status") not in ("running", None)
+        ]
+        if len(completed) <= self._max_completed_tasks:
+            return
+        completed.sort(key=lambda x: x[1].get("finished_at", 0))
+        to_remove = len(completed) - self._max_completed_tasks
+        for tid, _ in completed[:to_remove]:
+            self._task_meta.pop(tid, None)
     
     async def _run_subagent(
         self,
@@ -178,7 +200,6 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
-        model: str | None = None,
         context: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
@@ -230,7 +251,7 @@ class SubagentManager:
             # Run agent loop (limited iterations), with overall timeout
             timeout = self.subagent_timeout_s if self.subagent_timeout_s > 0 else None
             final_result = await asyncio.wait_for(
-                self._run_tool_loop(task_id, messages, tools, model),
+                self._run_tool_loop(task_id, messages, tools),
                 timeout=timeout,
             )
 
@@ -239,6 +260,15 @@ class SubagentManager:
             if meta:
                 meta["status"] = "ok"
                 meta["finished_at"] = time.time()
+                meta["result"] = final_result[:2000]
+                usage = meta.get("usage")
+                if usage:
+                    logger.info(
+                        f"Subagent [{task_id}] usage: "
+                        f"prompt={usage.get('prompt_tokens', 0)} "
+                        f"completion={usage.get('completion_tokens', 0)}"
+                        + (f" cost=${usage['cost']:.4f}" if usage.get("cost") else "")
+                    )
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
 
         except asyncio.TimeoutError:
@@ -249,6 +279,7 @@ class SubagentManager:
             if meta:
                 meta["status"] = "timeout"
                 meta["finished_at"] = time.time()
+                meta["result"] = error_msg[:2000]
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
 
         except asyncio.CancelledError:
@@ -257,6 +288,7 @@ class SubagentManager:
             if meta:
                 meta["status"] = "cancelled"
                 meta["finished_at"] = time.time()
+                meta["result"] = "Task was cancelled."
             await self._announce_result(
                 task_id, label, task, "Task was cancelled.", origin, "error"
             )
@@ -268,8 +300,10 @@ class SubagentManager:
             if meta:
                 meta["status"] = "error"
                 meta["finished_at"] = time.time()
+                meta["result"] = error_msg[:2000]
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
         finally:
+            self._prune_completed_meta()
             stop_status.set()
             if status_task is not None:
                 try:
@@ -282,12 +316,25 @@ class SubagentManager:
         task_id: str,
         messages: list[dict[str, Any]],
         tools: ToolRegistry,
-        model: str | None,
     ) -> str:
         """Inner tool loop for a subagent. Returns the final text result."""
         max_iterations = 15
         iteration = 0
         final_result: str | None = None
+        tool_error_streak = 0
+        nudged_for_response = False
+
+        # Usage accumulator
+        total_usage: dict[str, float] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "cost": 0,
+        }
+
+        # Tool log for progress tracking
+        meta = self._task_meta.get(task_id)
+        if meta:
+            meta["tool_log"] = []
 
         while iteration < max_iterations:
             iteration += 1
@@ -295,8 +342,18 @@ class SubagentManager:
             response = await self.provider.chat(
                 messages=messages,
                 tools=tools.get_definitions(),
-                model=model or self.model,
+                model=self.model,
             )
+
+            # Accumulate usage
+            if response.usage:
+                total_usage["prompt_tokens"] += response.usage.get("prompt_tokens", 0)
+                total_usage["completion_tokens"] += response.usage.get("completion_tokens", 0)
+                cost = response.usage.get("cost")
+                if cost is not None:
+                    total_usage["cost"] += cost
+            if meta:
+                meta["usage"] = total_usage
 
             if response.has_tool_calls:
                 tool_call_dicts = [
@@ -317,6 +374,7 @@ class SubagentManager:
                 })
 
                 results = await tools.execute_calls(response.tool_calls, allow_parallel=True)
+                abort_loop = False
                 for tool_call, result in zip(response.tool_calls, results):
                     logger.debug(f"Subagent [{task_id}] executing: {tool_call.name}")
                     messages.append({
@@ -325,12 +383,58 @@ class SubagentManager:
                         "name": tool_call.name,
                         "content": result,
                     })
-            else:
-                final_result = response.content
-                break
+
+                    # Tool log entry
+                    if meta is not None:
+                        meta["tool_log"].append({
+                            "tool": tool_call.name,
+                            "timestamp": time.time(),
+                            "result_preview": result[:100] if result else "",
+                        })
+
+                    # Error backoff tracking
+                    if self.tool_error_backoff > 0:
+                        if is_tool_error(result):
+                            tool_error_streak += 1
+                        else:
+                            tool_error_streak = 0
+
+                        if tool_error_streak >= self.tool_error_backoff:
+                            final_result = (
+                                "Task aborted: too many consecutive tool errors."
+                            )
+                            abort_loop = True
+                            break
+
+                if abort_loop:
+                    break
+
+                continue
+
+            # No tool calls — check for content
+            final_result = response.content
+
+            # Nudge once if the LLM returned empty content without tool calls
+            if (
+                not nudged_for_response
+                and (final_result is None or not final_result.strip())
+                and iteration < max_iterations
+            ):
+                nudged_for_response = True
+                messages.append({
+                    "role": "user",
+                    "content": "Please reply with a brief summary of what you did.",
+                })
+                final_result = None
+                continue
+
+            break
 
         if final_result is None:
-            final_result = "Task completed but no final response was generated."
+            final_result = (
+                f"Task completed but no final response was generated "
+                f"(reached {iteration}/{max_iterations} iterations)."
+            )
 
         return final_result
 
@@ -453,15 +557,18 @@ When you have completed the task, provide a clear summary of your findings or ac
 
         sections: list[str] = [identity]
 
-        # --- 2. Bootstrap files (budget: 2000 chars) ---
+        bootstrap_budget = self.subagent_bootstrap_chars
+        context_budget = self.subagent_context_chars
+
+        # --- 2. Bootstrap files ---
         try:
             bootstrap = self._context_builder._get_bootstrap_content()
             if bootstrap:
-                sections.append(bootstrap[:2000])
+                sections.append(bootstrap[:bootstrap_budget])
         except Exception:
             pass
 
-        # --- 3. Memory (budget: 2000 chars) ---
+        # --- 3. Memory ---
         try:
             memory = self._context_builder._get_memory_section(
                 session_key=None,
@@ -471,7 +578,7 @@ When you have completed the task, provide a clear summary of your findings or ac
                 history=[],
             )
             if memory:
-                sections.append(memory[:2000])
+                sections.append(memory[:bootstrap_budget])
         except Exception:
             pass
 
@@ -488,9 +595,17 @@ When you have completed the task, provide a clear summary of your findings or ac
         except Exception:
             pass
 
-        # --- 5. Spawn context (budget: 1000 chars) ---
+        # --- 5. Memory write instruction ---
+        memory_dir = self.workspace / "memory"
+        sections.append(
+            "## Memory\n\n"
+            f"You can write durable findings to `{memory_dir}/MEMORY.md` "
+            "using the `write_file` tool. This persists across sessions."
+        )
+
+        # --- 6. Spawn context ---
         if context:
-            sections.append("# Conversation Context\n\n" + context[:1000])
+            sections.append("# Conversation Context\n\n" + context[:context_budget])
 
         return "\n\n---\n\n".join(sections)
     

@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 class SubagentControlTool(Tool):
-    """Manage running subagents (list, cancel)."""
+    """Manage subagents (list, get, cancel)."""
 
     def __init__(self, manager: "SubagentManager"):
         self._manager = manager
@@ -22,8 +22,8 @@ class SubagentControlTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "List or cancel running subagents. "
-            "Use this to track background tasks or stop one by id."
+            "List, inspect, or cancel subagents. "
+            "Use this to track background tasks, get task results, or stop one by id."
         )
 
     @property
@@ -33,22 +33,42 @@ class SubagentControlTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "cancel"],
+                    "enum": ["list", "get", "cancel"],
                     "description": "Action to perform",
                 },
                 "task_id": {
                     "type": "string",
-                    "description": "Subagent task id (required for cancel)",
+                    "description": "Subagent task id (required for get and cancel)",
+                },
+                "include_completed": {
+                    "type": "boolean",
+                    "description": "Include completed tasks in list (default false)",
                 },
             },
             "required": ["action"],
         }
 
-    async def execute(self, action: str, task_id: str | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        action: str,
+        task_id: str | None = None,
+        include_completed: bool = False,
+        **kwargs: Any,
+    ) -> str:
         action = (action or "").strip().lower()
         if action == "list":
-            data = {"tasks": self._manager.list_running()}
+            if include_completed:
+                data = {"tasks": self._manager.list_all()}
+            else:
+                data = {"tasks": self._manager.list_running()}
             return json.dumps(data)
+        if action == "get":
+            if not task_id:
+                return "Error: task_id is required for get"
+            task = self._manager.get_task(task_id)
+            if task is None:
+                return json.dumps({"error": "task not found", "task_id": task_id})
+            return json.dumps(task, default=str)
         if action == "cancel":
             if not task_id:
                 return "Error: task_id is required for cancel"

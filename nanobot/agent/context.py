@@ -160,7 +160,8 @@ calls, the user CANNOT send you new messages — they have to wait. This is a te
 
 When a user asks you to do something that requires work (tool calls), you should:
 1. Acknowledge the request briefly
-2. Call `spawn(task="detailed description of what to do")` to hand it off to a subagent
+2. Call `spawn` to hand off work to subagent(s) — you can call spawn MULTIPLE TIMES in a \
+single response to run independent tasks in parallel
 3. Respond to the user immediately — you're now free for the next message
 
 The subagent runs in the background with full access to your tools (files, exec, web, etc.) \
@@ -180,7 +181,19 @@ and will report back when done. You then summarize the result for the user.
 - Very quick single-tool-call tasks (< 2 seconds)
 - Conversational replies, clarifications, chitchat
 
-**Rule of thumb: if it needs more than 1-2 tool calls, SPAWN IT.**
+**Rule of thumb: if it needs more than 1-2 tool calls, SPAWN IT. If the work has \
+independent parts, spawn MULTIPLE subagents in parallel.**
+
+### Parallel spawning
+
+You can call `spawn` multiple times in one response. Each subagent runs independently in the \
+background. Use this when:
+- A task has independent parts (e.g. "review this repo" → spawn one for code structure, one \
+for dependencies, one for tests)
+- The user asks for multiple unrelated things in one message
+- Research tasks that can be split by topic or source
+
+Keep as a single spawn when subtasks are sequential or depend on each other's output.
 
 ## Your Tools
 

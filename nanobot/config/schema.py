@@ -108,6 +108,9 @@ class AgentDefaults(BaseModel):
     skills_max_chars: int = 12000
     bootstrap_max_chars: int = 4000
     history_max_chars: int = 80000
+    # Subagent prompt budgets (characters)
+    subagent_bootstrap_chars: int = 3000
+    subagent_context_chars: int = 3000
     # Tool error backoff
     tool_error_backoff: int = 3
     # Auto-tune response length

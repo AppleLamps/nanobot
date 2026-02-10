@@ -11,30 +11,26 @@ if TYPE_CHECKING:
 class SpawnTool(Tool):
     """
     Tool to spawn a subagent for background task execution.
-    
+
     The subagent runs asynchronously and announces its result back
-    to the main agent when complete.
+    to the main agent when complete. It always uses the same model
+    as the main agent.
     """
-    
+
     def __init__(self, manager: "SubagentManager"):
         self._manager = manager
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"
-        self._model: str | None = None
-    
+
     def set_context(self, channel: str, chat_id: str) -> None:
         """Set the origin context for subagent announcements."""
         self._origin_channel = channel
         self._origin_chat_id = chat_id
 
-    def set_model(self, model: str | None) -> None:
-        """Set the model override so subagents use the same model as the parent session."""
-        self._model = model
-    
     @property
     def name(self) -> str:
         return "spawn"
-    
+
     @property
     def description(self) -> str:
         return (
@@ -45,7 +41,7 @@ class SpawnTool(Tool):
             "This keeps you responsive for conversation while work happens in background. "
             "Use the 'context' parameter to pass relevant conversation details the subagent will need."
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
@@ -69,7 +65,7 @@ class SpawnTool(Tool):
             },
             "required": ["task"],
         }
-    
+
     async def execute(
         self, task: str, label: str | None = None, context: str | None = None, **kwargs: Any
     ) -> str:
@@ -79,6 +75,5 @@ class SpawnTool(Tool):
             label=label,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
-            model=self._model,
             context=context,
         )

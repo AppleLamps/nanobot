@@ -16,9 +16,10 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.subagent_control import SubagentControlTool
 from nanobot.agent.tools.spawn import SpawnTool
+from nanobot.agent.tools.subagent_control import SubagentControlTool
 from nanobot.agent.tools.web import FirecrawlScrapeTool, WebFetchTool, WebSearchTool
+from nanobot.agent.utils import is_tool_error
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
@@ -108,6 +109,9 @@ class AgentLoop:
             firecrawl_api_key=firecrawl_api_key,
             exec_config=self.exec_config,
             context_builder=self.context,
+            tool_error_backoff=cfg.tool_error_backoff,
+            subagent_bootstrap_chars=cfg.subagent_bootstrap_chars,
+            subagent_context_chars=cfg.subagent_context_chars,
         )
 
         self._running = False
@@ -189,7 +193,6 @@ class AgentLoop:
 
         spawn_tool = SpawnTool(manager=self.subagents)
         spawn_tool.set_context(channel, chat_id)
-        spawn_tool.set_model(model)
         reg.register(spawn_tool)
 
         reg.set_allowed_tools(allowed_tools if isinstance(allowed_tools, list) else None)
@@ -243,8 +246,7 @@ class AgentLoop:
         # cross-chat state leaks (default channel/chat_id context).
 
     def _is_tool_error(self, result: str) -> bool:
-        s = result.strip().lower()
-        return s.startswith("error:") or s.startswith("warning:")
+        return is_tool_error(result)
 
     def _get_session_max_tokens(self, session: Session) -> int:
         if not self.auto_tune_max_tokens:
@@ -396,7 +398,7 @@ class AgentLoop:
                     if response:
                         await self.bus.publish_outbound(response)
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}")
+                    logger.opt(exception=True).error(f"Error processing message: {e}")
                     await self.bus.publish_outbound(
                         OutboundMessage(
                             channel=msg.channel,
@@ -712,22 +714,11 @@ class AgentLoop:
                     metadata={"type": "subagent_event", "data": {"ok": False}},
                 )
             label = str(control.get("label") or "").strip() or None
-            # Resolve session model so the spawned subagent inherits the override.
-            spawn_model: str | None = None
-            try:
-                session_key = msg.session_key
-                session = self.sessions.get_or_create(session_key)
-                m = session.metadata.get("model")
-                if isinstance(m, str) and m.strip():
-                    spawn_model = m.strip()
-            except Exception:
-                pass
             result = await self.subagents.spawn_task(
                 task=task,
                 label=label,
                 origin_channel=msg.channel,
                 origin_chat_id=msg.chat_id,
-                model=spawn_model,
             )
             return OutboundMessage(
                 channel=msg.channel,
@@ -751,7 +742,11 @@ class AgentLoop:
         return None
 
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:
-        """Process a system message (e.g., subagent announce)."""
+        """Process a system message (e.g., subagent announce).
+
+        Uses a lightweight single LLM call (no tools, minimal context) to
+        summarize the background task result for the user.
+        """
         logger.info(f"Processing system message from {msg.sender_id}")
 
         # Parse origin from chat_id (format: "channel:chat_id").
@@ -762,8 +757,6 @@ class AgentLoop:
 
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
-        allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
-        restrict_workspace = session.metadata.get("restrict_workspace")
 
         chosen_model: str | None = None
         try:
@@ -773,37 +766,30 @@ class AgentLoop:
         except Exception:
             chosen_model = None
 
-        tools = self._build_tools_for_request(
-            channel=origin_channel,
-            chat_id=origin_chat_id,
-            allowed_tools=allowed_tools if isinstance(allowed_tools, list) else None,
-            restrict_workspace=restrict_workspace if isinstance(restrict_workspace, bool) else None,
-            model=chosen_model,
+        # Build a minimal message list: system prompt + recent history + the announce
+        system_prompt = (
+            "You are nanobot. A background task just completed. "
+            "Summarize its result naturally for the user. "
+            "Keep it brief (1-2 sentences). "
+            "Do not mention technical details like 'subagent' or task IDs."
         )
+        history = session.get_history(max_messages=5)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": msg.content})
 
-        messages = self.context.build_messages(
-            history=session.get_history(),
-            current_message=msg.content,
-            session_key=session_key,
-            # System messages should not attribute memory to the subagent sender_id.
-            memory_scope="session",
-            memory_key=session_key,
-        )
-
-        final_content = await self._run_tool_loop(
-            session=session,
+        # Single LLM call — no tools, no tool loop
+        response = await self.provider.chat(
             messages=messages,
-            tools=tools,
-            tool_error_backoff_message=(
-                "Background task hit repeated tool errors. "
-                "Please rephrase or provide more specific inputs."
-            ),
-            no_response_message="Background task completed.",
-            channel=origin_channel,
-            chat_id=origin_chat_id,
-            verbosity=str(session.metadata.get("verbosity") or "normal"),
-            model=chosen_model,
+            tools=None,
+            model=(chosen_model or "").strip() or self.model,
+            max_tokens=512,
+            temperature=self.temperature,
         )
+
+        final_content = (response.content or "").strip() or "Background task completed."
+
+        self._record_usage(session, response.usage, 512)
 
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
