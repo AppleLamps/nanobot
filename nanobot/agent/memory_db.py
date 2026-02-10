@@ -218,15 +218,19 @@ class MemoryDB:
                 ).fetchall()
                 return [MemoryHit(scope=scope, source_key=r[0], content=r[1]) for r in rows]
             except sqlite3.OperationalError:
-                # Fall back to LIKE.
-                like = "%" + query_text.strip()[:200] + "%"
+                # Fall back to LIKE with tokenised OR (mirrors _fts_query_from_text).
+                terms = re.findall(r"[A-Za-z0-9_]{2,}", query_text)[:16]
+                if not terms:
+                    return []
+                where = " OR ".join(["content LIKE ?"] * len(terms))
+                params: list[str | int] = [scope] + ["%" + t + "%" for t in terms] + [limit]
                 rows = con.execute(
-                    """
+                    f"""
                     SELECT source_key, content
                     FROM memory_entries
-                    WHERE scope = ? AND content LIKE ?
+                    WHERE scope = ? AND ({where})
                     LIMIT ?
                     """,
-                    (scope, like, limit),
+                    params,
                 ).fetchall()
                 return [MemoryHit(scope=scope, source_key=r[0], content=r[1]) for r in rows]
