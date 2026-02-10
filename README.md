@@ -14,7 +14,7 @@
 
 🐈 **nanobot** is an **ultra-lightweight** personal AI assistant inspired by [Clawdbot](https://github.com/openclaw/openclaw)
 
-⚡️ Delivers core agent functionality in about **~8,000** lines of Python (excluding tests) — **~98% smaller** than Clawdbot's 430k+ lines.
+⚡️ Delivers core agent functionality in about **~10,000** lines of Python (excluding tests) — **~98% smaller** than Clawdbot's 430k+ lines.
 
 ## 📢 News
 
@@ -22,7 +22,7 @@
 
 ## Key Features of nanobot
 
-🪶 **Ultra-Lightweight**: About ~8,000 lines of Python (excluding tests) — ~98% smaller than Clawdbot - core functionality.
+🪶 **Ultra-Lightweight**: About ~10,000 lines of Python (excluding tests) — ~98% smaller than Clawdbot - core functionality.
 
 🔬 **Research-Ready**: Clean, readable code that's easy to understand, modify, and extend for research.
 
@@ -72,7 +72,7 @@
 **Install from source** (latest features, recommended for development)
 
 ```bash
-git clone https://github.com/HKUDS/nanobot.git
+git clone https://github.com/AppleLamps/nanobot.git
 cd nanobot
 pip install -e .
 ```
@@ -353,6 +353,9 @@ nanobot gateway
 
 Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROFILE` or `--data-dir` / `NANOBOT_DATA_DIR` to change this)
 
+> [!TIP]
+> Configuration uses **camelCase** field names in JSON files (e.g., `apiKey`, `memoryScope`), which are automatically converted to/from **snake_case** in Python code.
+
 ### Providers
 
 > [!NOTE]
@@ -368,6 +371,9 @@ Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROF
 | `zhipu` | LLM (Zhipu/GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
 | `vllm` | Local / OpenAI-compatible endpoint | — (set `apiBase` instead) |
 
+> [!NOTE]
+> AWS Bedrock models are supported via the `bedrock/` model prefix (e.g., `bedrock/anthropic.claude-3-sonnet`) and use AWS credentials from your environment (no config entry needed).
+
 ### Agents
 
 `agents.defaults` controls runtime behavior of the core agent.
@@ -381,17 +387,20 @@ Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROF
 | `maxTokens` | Max tokens per response | `8192` |
 | `temperature` | Sampling temperature | `0.7` |
 | `maxToolIterations` | Max tool loop iterations per message | `20` |
-| `memoryScope` | Memory isolation boundary: `session` = per chat (channel:chat_id), `user` = per user (channel:sender_id) | `session` |
+| `memoryScope` | Memory isolation boundary: `session` = per chat (channel:chat_id), `user` = per user (channel:sender_id), `global` = workspace-wide | `session` |
 | `maxConcurrentMessages` | Max number of different chats processed in parallel (messages within the same chat are still sequential) | `4` |
 | `memoryMaxChars` | Prompt budget for memory injection (chars) | `6000` |
 | `skillsMaxChars` | Prompt budget for skills injection (chars) | `12000` |
 | `bootstrapMaxChars` | Prompt budget for bootstrap files (chars) | `4000` |
+| `historyMaxChars` | Prompt budget for conversation history (chars) | `80000` |
 | `toolErrorBackoff` | Tool retry backoff (attempts) | `3` |
 | `autoTuneMaxTokens` | Auto-tune response length | `false` |
 | `initialMaxTokens` | Initial tokens when auto-tune is on | `null` |
 | `autoTuneStep` | Auto-tune step size | `512` |
 | `autoTuneThreshold` | Auto-tune trigger threshold | `0.85` |
 | `autoTuneStreak` | Consecutive triggers to adjust | `3` |
+| `subagentBootstrapChars` | Prompt budget for subagent bootstrap | `3000` |
+| `subagentContextChars` | Prompt budget for subagent context | `3000` |
 
 ### Memory
 
@@ -582,24 +591,29 @@ Each profile is fully isolated — different models, different memories, differe
 | Command | Description |
 |---------|-------------|
 | `nanobot onboard` | Initialize config & workspace |
+| `nanobot onboard --no-prompt` | Initialize without interactive prompts |
 | `nanobot agent -m "..."` | Chat with the agent |
 | `nanobot agent` | Interactive chat mode |
 | `nanobot agent -m "..." --media img.png` | Chat with image/PDF attachments |
 | `nanobot agent --session my-project` | Chat in a named session |
-| `nanobot gateway` | Start the gateway |
-| `nanobot gateway --webui` | Start gateway with Web UI enabled |
+| `nanobot gateway` | Start the gateway (all enabled channels + cron + heartbeat; default port: 18790) |
+| `nanobot gateway --webui` | Start gateway with Web UI enabled (port: 18791) |
 | `nanobot gateway --port 8080` | Start gateway on a custom port |
-| `nanobot status` | Show status |
+| `nanobot status` | Show status (API keys, workspace, providers) |
 | `nanobot channels login` | Link WhatsApp (scan QR) |
-| `nanobot channels status` | Show channel status |
-| `nanobot skills list` | List all available skills |
-| `nanobot skills init <name>` | Create a new skill scaffold |
-| `nanobot skills install <file>` | Install a .skill package |
-| `nanobot cron list` | List scheduled jobs |
-| `nanobot cron add ...` | Add a scheduled job |
+| `nanobot channels status` | Show all channel configurations and status |
+| `nanobot skills list` | List all available skills with descriptions |
+| `nanobot skills init <name>` | Create a new skill scaffold with SKILL.md template |
+| `nanobot skills install <file>` | Install a .skill package (zip archive) |
+| `nanobot skills install <file> --force` | Install and overwrite existing skill |
+| `nanobot cron list` | List all scheduled jobs with status |
+| `nanobot cron list --all` | List all jobs including disabled ones |
+| `nanobot cron add ...` | Add a scheduled job (see Scheduled Tasks section) |
 | `nanobot cron remove <id>` | Remove a scheduled job |
-| `nanobot cron enable <id>` | Enable/disable a job (`--disable`) |
+| `nanobot cron enable <id>` | Enable a job |
+| `nanobot cron enable <id> --disable` | Disable a job without deleting |
 | `nanobot cron run <id>` | Manually trigger a job |
+| `nanobot cron run <id> --force` | Force-run a disabled job |
 | `nanobot --profile <name> ...` | Use a named profile (separate config & data) |
 | `nanobot --version` | Show version |
 
@@ -614,22 +628,33 @@ Each profile is fully isolated — different models, different memories, differe
 <details>
 <summary><b>Scheduled Tasks (Cron)</b></summary>
 
+nanobot supports scheduled tasks with flexible timing (cron expressions, intervals, or one-time execution) and two job types:
+
+**Job Types:**
+- **task** (default) - Message is processed by the agent with full tool access; agent's response is delivered
+- **reminder** - Message is delivered verbatim without agent processing (simple notification)
+
+**Scheduling Options:**
+- `--cron` - Standard cron expression (e.g., "0 9 * * *" for 9 AM daily)
+- `--every` - Repeat every N seconds
+- `--at` - One-time execution at ISO timestamp (e.g., "2026-03-01T14:00:00")
+
 ```bash
-# Add a job (cron expression)
-nanobot cron add --name "daily" --message "Good morning!" --cron "0 9 * * *"
+# Add a task job (processed by agent; default)
+nanobot cron add --name "daily" --message "Good morning! What's on my schedule?" --cron "0 9 * * *"
 
 # Add a job (interval in seconds)
-nanobot cron add --name "hourly" --message "Check status" --every 3600
+nanobot cron add --name "hourly" --message "Check system status" --every 3600
 
 # Add a one-time job
 nanobot cron add --name "reminder" --message "Call dentist" --at "2026-03-01T14:00:00"
 
-# Deliver the agent's response to a specific channel (task mode; default)
+# Deliver the agent's response to a specific channel (with --deliver)
 nanobot cron add --name "report" --message "Daily summary" --cron "0 18 * * *" \
   --deliver --to "123456789" --channel "telegram"
 
-# Deliver a reminder verbatim (bypass agent loop)
-nanobot cron add --name "water" --type reminder --message "Drink water" --every 3600 \
+# Deliver a reminder verbatim (bypass agent loop with --type reminder)
+nanobot cron add --name "water" --type reminder --message "💧 Drink water!" --every 3600 \
   --deliver --to "123456789" --channel "telegram"
 
 # List jobs
@@ -642,6 +667,7 @@ nanobot cron enable <job_id> --disable
 
 # Manually run a job
 nanobot cron run <job_id>
+nanobot cron run <job_id> --force  # run even if disabled
 
 # Remove a job
 nanobot cron remove <job_id>
@@ -712,6 +738,24 @@ nanobot can **spawn background subagents** to handle long-running tasks while th
 
 Subagents run asynchronously with the same tools as the main agent (file ops, shell, web, etc.) and announce their results back to the conversation when complete.
 
+## 💓 Heartbeat Service
+
+nanobot includes a **proactive wake-up service** that periodically checks for tasks to execute automatically. When the gateway is running, the heartbeat service wakes up the agent every 30 minutes (configurable) to check for pending work.
+
+**How it works:**
+
+1. Create a `HEARTBEAT.md` file in your workspace (`~/.nanobot/workspace/`)
+2. Add tasks as markdown checkboxes:
+   ```markdown
+   - [ ] Check if any important emails need responses
+   - [ ] Review calendar for upcoming events
+   - [ ] Monitor system resources
+   ```
+3. The agent processes unchecked tasks during each heartbeat
+4. Returns `HEARTBEAT_OK` if no actionable tasks are found
+
+This enables your nanobot to be truly proactive — monitoring, checking, and acting without waiting for your messages.
+
 ## 🐳 Docker
 
 > [!TIP]
@@ -766,7 +810,7 @@ nanobot/
 
 PRs welcome! The codebase is intentionally small and readable. 🤗
 
-**Roadmap** — Pick an item and [open a PR](https://github.com/HKUDS/nanobot/pulls)!
+**Roadmap** — Pick an item and [open a PR](https://github.com/AppleLamps/nanobot/pulls)!
 
 - [x] **Voice Transcription** — Support for Groq Whisper (Issue #13)
 - [ ] **Multi-modal** — See and hear (images, voice, video)
@@ -777,25 +821,25 @@ PRs welcome! The codebase is intentionally small and readable. 🤗
 
 ### Contributors
 
-<a href="https://github.com/HKUDS/nanobot/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=HKUDS/nanobot&max=100&columns=12" />
+<a href="https://github.com/AppleLamps/nanobot/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=AppleLamps/nanobot&max=100&columns=12" />
 </a>
 
 ## ⭐ Star History
 
 <div align="center">
-  <a href="https://star-history.com/#HKUDS/nanobot&Date">
+  <a href="https://star-history.com/#AppleLamps/nanobot&Date">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=HKUDS/nanobot&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=HKUDS/nanobot&type=Date" />
-      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=HKUDS/nanobot&type=Date" style="border-radius: 15px; box-shadow: 0 0 30px rgba(0, 217, 255, 0.3);" />
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=AppleLamps/nanobot&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=AppleLamps/nanobot&type=Date" />
+      <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=AppleLamps/nanobot&type=Date" style="border-radius: 15px; box-shadow: 0 0 30px rgba(0, 217, 255, 0.3);" />
     </picture>
   </a>
 </div>
 
 <p align="center">
   <em> Thanks for visiting ✨ nanobot!</em><br><br>
-  <img src="https://visitor-badge.laobi.icu/badge?page_id=HKUDS.nanobot&style=for-the-badge&color=00d4ff" alt="Views">
+  <img src="https://visitor-badge.laobi.icu/badge?page_id=AppleLamps.nanobot&style=for-the-badge&color=00d4ff" alt="Views">
 </p>
 
 <p align="center">
