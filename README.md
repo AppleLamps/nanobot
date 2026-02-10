@@ -353,6 +353,9 @@ nanobot gateway
 
 Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROFILE` or `--data-dir` / `NANOBOT_DATA_DIR` to change this)
 
+> [!TIP]
+> Configuration uses **camelCase** field names in JSON files (e.g., `apiKey`, `memoryScope`), which are automatically converted to/from **snake_case** in Python code.
+
 ### Providers
 
 > [!NOTE]
@@ -366,8 +369,10 @@ Config file (default): `~/.nanobot/config.json` (use `--profile` / `NANOBOT_PROF
 | `groq` | LLM + **Voice transcription** (Whisper) | [console.groq.com](https://console.groq.com) |
 | `gemini` | LLM (Gemini direct) | [aistudio.google.com](https://aistudio.google.com) |
 | `zhipu` | LLM (Zhipu/GLM) | [open.bigmodel.cn](https://open.bigmodel.cn) |
-| `bedrock` | AWS Bedrock models (use `bedrock/` prefix in model name) | [AWS Console](https://aws.amazon.com/bedrock/) |
 | `vllm` | Local / OpenAI-compatible endpoint | — (set `apiBase` instead) |
+
+> [!NOTE]
+> AWS Bedrock models are supported via the `bedrock/` model prefix (e.g., `bedrock/anthropic.claude-3-sonnet`) and use AWS credentials from your environment (no config entry needed).
 
 ### Agents
 
@@ -591,8 +596,8 @@ Each profile is fully isolated — different models, different memories, differe
 | `nanobot agent` | Interactive chat mode |
 | `nanobot agent -m "..." --media img.png` | Chat with image/PDF attachments |
 | `nanobot agent --session my-project` | Chat in a named session |
-| `nanobot gateway` | Start the gateway (all enabled channels + cron + heartbeat) |
-| `nanobot gateway --webui` | Start gateway with Web UI enabled |
+| `nanobot gateway` | Start the gateway (all enabled channels + cron + heartbeat; default port: 18790) |
+| `nanobot gateway --webui` | Start gateway with Web UI enabled (port: 18791) |
 | `nanobot gateway --port 8080` | Start gateway on a custom port |
 | `nanobot status` | Show status (API keys, workspace, providers) |
 | `nanobot channels login` | Link WhatsApp (scan QR) |
