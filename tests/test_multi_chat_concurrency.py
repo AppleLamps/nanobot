@@ -26,6 +26,7 @@ class _BarrierProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        use_fallbacks: bool = True,
     ) -> LLMResponse:
         self._started += 1
         if self._started >= 2:
@@ -80,6 +81,7 @@ class _MessageToolRaceProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        use_fallbacks: bool = True,
     ) -> LLMResponse:
         # Find last user text (no media in this test).
         user_text = ""

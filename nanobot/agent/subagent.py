@@ -343,6 +343,7 @@ class SubagentManager:
                 messages=messages,
                 tools=tools.get_definitions(),
                 model=self.model,
+                use_fallbacks=False,
             )
 
             # Accumulate usage

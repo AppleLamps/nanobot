@@ -59,6 +59,7 @@ class OpenRouterProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        use_fallbacks: bool = True,
     ) -> LLMResponse:
         model = model or self.default_model
 
@@ -74,10 +75,11 @@ class OpenRouterProvider(LLMProvider):
             body["tool_choice"] = "auto"
 
         # Model fallbacks: if the primary model errors, OpenRouter tries the next.
-        fallbacks = [m for m in self.fallback_models if m != model]
-        if fallbacks:
-            body["models"] = [model] + fallbacks
-            body["route"] = "fallback"
+        if use_fallbacks:
+            fallbacks = [m for m in self.fallback_models if m != model]
+            if fallbacks:
+                body["models"] = [model] + fallbacks
+                body["route"] = "fallback"
 
         client = self._get_client()
         last_error: LLMError | None = None

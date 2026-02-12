@@ -31,6 +31,7 @@ class _SeqProvider(LLMProvider):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        use_fallbacks: bool = True,
     ) -> LLMResponse:
         if self.calls >= len(self._responses):
             raise AssertionError("provider.chat called more times than expected")

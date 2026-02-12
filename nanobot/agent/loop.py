@@ -22,7 +22,7 @@ from nanobot.agent.tools.web import FirecrawlScrapeTool, WebFetchTool, WebSearch
 from nanobot.agent.utils import is_tool_error
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
-from nanobot.providers.base import LLMProvider
+from nanobot.providers.base import LLMError, LLMProvider
 from nanobot.session.manager import SessionManager
 
 if TYPE_CHECKING:
@@ -399,10 +399,14 @@ class AgentLoop:
                         await self.bus.publish_outbound(response)
                 except Exception as e:
                     logger.opt(exception=True).error(f"Error processing message: {e}")
+                    err_channel = msg.channel
+                    err_chat_id = msg.chat_id
+                    if msg.channel == "system" and ":" in msg.chat_id:
+                        err_channel, err_chat_id = msg.chat_id.split(":", 1)
                     await self.bus.publish_outbound(
                         OutboundMessage(
-                            channel=msg.channel,
-                            chat_id=msg.chat_id,
+                            channel=err_channel,
+                            chat_id=err_chat_id,
                             content=f"Sorry, I encountered an error: {str(e)}",
                         )
                     )
@@ -779,17 +783,19 @@ class AgentLoop:
         messages.append({"role": "user", "content": msg.content})
 
         # Single LLM call — no tools, no tool loop
-        response = await self.provider.chat(
-            messages=messages,
-            tools=None,
-            model=(chosen_model or "").strip() or self.model,
-            max_tokens=512,
-            temperature=self.temperature,
-        )
-
-        final_content = (response.content or "").strip() or "Background task completed."
-
-        self._record_usage(session, response.usage, 512)
+        try:
+            response = await self.provider.chat(
+                messages=messages,
+                tools=None,
+                model=(chosen_model or "").strip() or self.model,
+                max_tokens=512,
+                temperature=self.temperature,
+            )
+            final_content = (response.content or "").strip() or "Background task completed."
+            self._record_usage(session, response.usage, 512)
+        except LLMError as e:
+            logger.warning(f"LLM unavailable for system message summary: {e}")
+            final_content = "A background task finished but I couldn't summarize the result."
 
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)

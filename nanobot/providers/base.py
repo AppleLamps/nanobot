@@ -57,6 +57,7 @@ class LLMProvider(ABC):
         model: str | None = None,
         max_tokens: int = 4096,
         temperature: float = 0.7,
+        use_fallbacks: bool = True,
     ) -> LLMResponse:
         """
         Send a chat completion request.
