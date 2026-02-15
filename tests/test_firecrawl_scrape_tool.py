@@ -212,7 +212,6 @@ async def test_env_var_fallback(monkeypatch):
     monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-from-env")
 
     async def fake_post(self, url, **kwargs):
-        captured_auth = kwargs.get("headers", {}).get("Authorization", "")
         return _FakeResponse(200, _firecrawl_response())
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
@@ -222,4 +221,3 @@ async def test_env_var_fallback(monkeypatch):
     result = await tool.execute(url="https://example.com")
     obj = json.loads(result)
     assert "text" in obj  # successful response
-

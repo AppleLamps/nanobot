@@ -3,7 +3,7 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { WhatsAppClient, InboundMessage } from './whatsapp.js';
+import { WhatsAppClient } from './whatsapp.js';
 
 interface SendCommand {
   type: 'send';
@@ -75,10 +75,26 @@ export class BridgeServer {
 
   private broadcast(msg: BridgeMessage): void {
     const data = JSON.stringify(msg);
+    const staleClients: WebSocket[] = [];
     for (const client of this.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(data);
+      if (client.readyState !== WebSocket.OPEN) {
+        staleClients.push(client);
+        continue;
       }
+      try {
+        client.send(data);
+      } catch (error) {
+        console.error('Broadcast failed for client:', error);
+        staleClients.push(client);
+        try {
+          client.close();
+        } catch (_) {
+          // Ignore close errors during best-effort cleanup.
+        }
+      }
+    }
+    for (const client of staleClients) {
+      this.clients.delete(client);
     }
   }
 

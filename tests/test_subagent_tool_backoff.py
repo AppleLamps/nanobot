@@ -1,10 +1,7 @@
 """Tests for subagent tool loop resilience: error backoff, response nudge, usage tracking."""
 
-import json
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.base import Tool

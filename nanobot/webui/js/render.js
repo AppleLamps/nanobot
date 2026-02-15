@@ -2,6 +2,26 @@
 
 import { dom, state } from "./state.js";
 
+/* --- Blob URL lifecycle (avoid memory leaks on repeated renders) --- */
+
+function _makeObjectURL(file) {
+  try {
+    return URL.createObjectURL(file);
+  } catch (_) {
+    return "";
+  }
+}
+
+function _revokeObjectURL(url) {
+  if (!url || typeof url !== "string") return;
+  if (!url.startsWith("blob:")) return;
+  try {
+    URL.revokeObjectURL(url);
+  } catch (_) { }
+}
+
+const _attachmentPreviewUrls = new Map();
+
 /* --- Scroll helpers --- */
 
 export function nearBottom() {
@@ -303,9 +323,16 @@ export function addRow(role, text, opts) {
       const attachDiv = document.createElement("div");
       attachDiv.className = "msg-attachments";
       for (const item of list) {
-        let url;
+        let url = "";
+        let isBlob = false;
         if (item instanceof File) {
-          url = URL.createObjectURL(item);
+          const fileLooksImage =
+            (item.type && item.type.startsWith("image/")) ||
+            /\.(jpe?g|png|gif|webp|svg)$/i.test(item.name || "");
+          if (fileLooksImage) {
+            url = _makeObjectURL(item);
+            isBlob = !!url;
+          }
         } else if (typeof item === "string") {
           // Relative paths like "uploads/file.jpg" → "/uploads/file.jpg"
           url = item.startsWith("/") || item.startsWith("http") || item.startsWith("blob:") || item.startsWith("data:")
@@ -324,6 +351,10 @@ export function addRow(role, text, opts) {
             img.src = url;
             img.className = "msg-img";
             img.loading = "lazy";
+            if (isBlob) {
+              img.addEventListener("load", () => _revokeObjectURL(url), { once: true });
+              img.addEventListener("error", () => _revokeObjectURL(url), { once: true });
+            }
             attachDiv.appendChild(img);
           }
         }
@@ -396,6 +427,13 @@ export function renderHistory(msgs) {
 
 export function renderAttachments() {
   if (!dom.attachments) return;
+  // Revoke preview URLs for files that are no longer attached.
+  for (const [file, url] of _attachmentPreviewUrls) {
+    if (!state.attachments.includes(file)) {
+      _revokeObjectURL(url);
+      _attachmentPreviewUrls.delete(file);
+    }
+  }
   dom.attachments.innerHTML = "";
   for (let i = 0; i < state.attachments.length; i++) {
     const f = state.attachments[i];
@@ -407,7 +445,13 @@ export function renderAttachments() {
 
       const img = document.createElement("img");
       img.className = "attach-card-img";
-      img.src = URL.createObjectURL(f);
+      // Reuse one preview URL per File and revoke when attachment leaves state.
+      let previewUrl = _attachmentPreviewUrls.get(f);
+      if (!previewUrl) {
+        previewUrl = _makeObjectURL(f);
+        if (previewUrl) _attachmentPreviewUrls.set(f, previewUrl);
+      }
+      img.src = previewUrl || "";
       img.alt = f.name;
       card.appendChild(img);
 
@@ -417,6 +461,11 @@ export function renderAttachments() {
       x.title = "Remove";
       x.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
       x.addEventListener("click", () => {
+        const currentUrl = _attachmentPreviewUrls.get(f);
+        if (currentUrl) {
+          _revokeObjectURL(currentUrl);
+          _attachmentPreviewUrls.delete(f);
+        }
         state.attachments.splice(i, 1);
         renderAttachments();
       });
