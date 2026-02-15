@@ -86,12 +86,54 @@ function safeLink(url) {
 export function renderMarkdown(text) {
   const t = String(text ?? "");
   const root = document.createElement("div");
-  const re = /```([\w+-]*)\n([\s\S]*?)```/g;
-  let last = 0;
+
+  /* --- Phase 1: Extract fenced code blocks line-by-line to avoid regex mis-matches --- */
+  const segments = []; // { type: "text" | "code", content, lang? }
+  const lines = t.split(/\r?\n/);
+  let i = 0;
+  let textBuf = [];
+
+  function flushText() {
+    if (textBuf.length) {
+      segments.push({ type: "text", content: textBuf.join("\n") });
+      textBuf = [];
+    }
+  }
+
+  while (i < lines.length) {
+    const fenceMatch = /^(`{3,})([\w+-]*)/.exec(lines[i]);
+    if (fenceMatch) {
+      flushText();
+      const fence = fenceMatch[1]; // e.g. ``` or ````
+      const lang = (fenceMatch[2] || "").trim();
+      const codeBuf = [];
+      i++;
+      while (i < lines.length) {
+        if (lines[i].trimEnd() === fence || lines[i].startsWith(fence)) {
+          i++;
+          break;
+        }
+        codeBuf.push(lines[i]);
+        i++;
+      }
+      segments.push({ type: "code", content: codeBuf.join("\n"), lang });
+    } else {
+      textBuf.push(lines[i]);
+      i++;
+    }
+  }
+  flushText();
+
+  /* --- Phase 2: Render segments --- */
 
   function inlineHtml(s) {
     let x = esc(s);
-    x = x.replace(/`([^`]+)`/g, (m, c) => `<code>${esc(c)}</code>`);
+    // Protect inline code spans first — replace with placeholders
+    const codeSpans = [];
+    x = x.replace(/`([^`]+)`/g, (m, c) => {
+      codeSpans.push(`<code>${c}</code>`);
+      return `\x00CODE${codeSpans.length - 1}\x00`;
+    });
     x = x.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     x = x.replace(/__([^_]+)__/g, "<strong>$1</strong>");
     x = x.replace(
@@ -108,11 +150,13 @@ export function renderMarkdown(text) {
       if (!href) return `${label} (${url})`;
       return `<a href="${href}" target="_blank" rel="noreferrer noopener">${label}</a>`;
     });
+    // Restore inline code spans
+    x = x.replace(/\x00CODE(\d+)\x00/g, (_, idx) => codeSpans[parseInt(idx)]);
     return x;
   }
 
   function addTextBlock(s) {
-    const lines = String(s || "").split(/\r?\n/);
+    const blockLines = String(s || "").split(/\r?\n/);
     let para = [];
     let listEl = null;
     let listType = "";
@@ -131,13 +175,13 @@ export function renderMarkdown(text) {
       listType = "";
     }
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    for (let j = 0; j < blockLines.length; j++) {
+      const line = blockLines[j];
       const trimmed = line.trim();
 
       if (!trimmed) {
         flushPara();
-        flushList();
+        // Don't flush list on blank lines — allow continuation paragraphs
         continue;
       }
 
@@ -162,12 +206,12 @@ export function renderMarkdown(text) {
         flushPara();
         flushList();
         const parts = [];
-        for (; i < lines.length; i++) {
-          const l = lines[i];
+        for (; j < blockLines.length; j++) {
+          const l = blockLines[j];
           if (!l.trim().startsWith(">")) break;
           parts.push(l.replace(/^\s*>\s?/, "").trim());
         }
-        i -= 1;
+        j -= 1;
         const bq = document.createElement("blockquote");
         const p = document.createElement("p");
         p.innerHTML = inlineHtml(parts.join(" "));
@@ -186,8 +230,19 @@ export function renderMarkdown(text) {
           listEl = document.createElement(nextType);
           listType = nextType;
         }
+        // Collect continuation lines (indented by 2+ spaces or tab)
+        const liParts = [(ol || ul)[1]];
+        while (j + 1 < blockLines.length) {
+          const next = blockLines[j + 1];
+          if (/^\s{2,}/.test(next) && next.trim()) {
+            liParts.push(next.trim());
+            j++;
+          } else {
+            break;
+          }
+        }
         const li = document.createElement("li");
-        li.innerHTML = inlineHtml((ol || ul)[1]);
+        li.innerHTML = inlineHtml(liParts.join(" "));
         listEl.appendChild(li);
         continue;
       }
@@ -197,15 +252,15 @@ export function renderMarkdown(text) {
         flushPara();
         flushList();
         const tableLines = [];
-        for (; i < lines.length; i++) {
-          const tl = lines[i].trim();
+        for (; j < blockLines.length; j++) {
+          const tl = blockLines[j].trim();
           if (tl.startsWith("|") && tl.endsWith("|")) {
             tableLines.push(tl);
           } else {
             break;
           }
         }
-        i -= 1;
+        j -= 1;
 
         if (tableLines.length >= 2) {
           const parseCells = (row) =>
@@ -263,6 +318,22 @@ export function renderMarkdown(text) {
         continue;
       }
 
+      /* --- Indented code block (4 spaces or 1 tab) --- */
+      if (/^(    |\t)/.test(line) && !listEl) {
+        flushPara();
+        const codeLines = [line.replace(/^(    |\t)/, "")];
+        while (j + 1 < blockLines.length && /^(    |\t)/.test(blockLines[j + 1])) {
+          j++;
+          codeLines.push(blockLines[j].replace(/^(    |\t)/, ""));
+        }
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.textContent = codeLines.join("\n");
+        pre.appendChild(code);
+        root.appendChild(pre);
+        continue;
+      }
+
       para.push(trimmed);
     }
 
@@ -270,18 +341,49 @@ export function renderMarkdown(text) {
     flushList();
   }
 
-  for (let m; (m = re.exec(t));) {
-    if (m.index > last) addTextBlock(t.slice(last, m.index));
-    const pre = document.createElement("pre");
-    const code = document.createElement("code");
-    const lang = (m[1] || "").trim();
-    if (lang) code.className = `language-${lang}`;
-    code.textContent = m[2] || "";
-    pre.appendChild(code);
-    root.appendChild(pre);
-    last = m.index + m[0].length;
+  for (const seg of segments) {
+    if (seg.type === "text") {
+      addTextBlock(seg.content);
+    } else {
+      const wrapper = document.createElement("div");
+      wrapper.className = "code-block";
+      const pre = document.createElement("pre");
+      const code = document.createElement("code");
+      if (seg.lang) code.className = `language-${seg.lang}`;
+      code.textContent = seg.content || "";
+      pre.appendChild(code);
+
+      const toolbar = document.createElement("div");
+      toolbar.className = "code-toolbar";
+      if (seg.lang) {
+        const langLabel = document.createElement("span");
+        langLabel.className = "code-lang";
+        langLabel.textContent = seg.lang;
+        toolbar.appendChild(langLabel);
+      }
+      const copyBtn = document.createElement("button");
+      copyBtn.className = "code-copy";
+      copyBtn.type = "button";
+      copyBtn.title = "Copy code";
+      copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span>';
+      copyBtn.addEventListener("click", () => {
+        const text = code.textContent || "";
+        navigator.clipboard.writeText(text).then(() => {
+          copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Copied!</span>';
+          copyBtn.classList.add("copied");
+          setTimeout(() => {
+            copyBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span>';
+            copyBtn.classList.remove("copied");
+          }, 2000);
+        }).catch(() => { });
+      });
+      toolbar.appendChild(copyBtn);
+
+      wrapper.appendChild(toolbar);
+      wrapper.appendChild(pre);
+      root.appendChild(wrapper);
+    }
   }
-  if (last < t.length) addTextBlock(t.slice(last));
   return root;
 }
 
@@ -309,7 +411,10 @@ export function addRow(role, text, opts) {
 
   const meta = document.createElement("div");
   meta.className = "meta";
-  meta.textContent = role === "user" ? "you" : "nanobot";
+  const roleLabel = role === "user" ? "you" : "nanobot";
+  const ts = opts && opts.ts ? new Date(opts.ts * 1000) : new Date();
+  const timeStr = ts.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  meta.textContent = `${roleLabel} \u00b7 ${timeStr}`;
 
   const bubble = document.createElement("div");
   bubble.className = "bubble " + role;
@@ -406,8 +511,10 @@ export function addRow(role, text, opts) {
   dom.rows.appendChild(row);
   updateEmpty();
 
-  if ((opts && opts.autoscroll) || nearBottom()) scrollToBottom();
-  updateJump();
+  if (!(opts && opts.skipScroll)) {
+    if ((opts && opts.autoscroll) || nearBottom()) scrollToBottom();
+    updateJump();
+  }
   return row;
 }
 
@@ -416,7 +523,7 @@ export function renderHistory(msgs) {
   state.lastHistoryEmpty = state.serverHistory.length === 0;
   clearRows();
   for (const m of state.serverHistory) {
-    addRow(m.role, m.content, { media: m.media, attachments: m.attachments });
+    addRow(m.role, m.content, { media: m.media, attachments: m.attachments, ts: m.ts, skipScroll: true });
   }
   updateEmpty();
   scrollToBottom();

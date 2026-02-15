@@ -58,6 +58,12 @@ body {
   position: relative;
   display: flex;
   flex-direction: column;
+  transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+}
+
+.shell.drag-over {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15), var(--shadow);
 }
 
 /* --- Buttons --- */

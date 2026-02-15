@@ -234,8 +234,9 @@ export function connect() {
       }
 
       const c = data.content || "";
-      addRow("assistant", c);
-      state.serverHistory.push({ role: "assistant", content: c });
+      const msgTs = data.ts || (Date.now() / 1000);
+      addRow("assistant", c, { ts: msgTs });
+      state.serverHistory.push({ role: "assistant", content: c, ts: msgTs });
 
       state.inflight = false;
       if (dom.sendBtn) dom.sendBtn.disabled = false;

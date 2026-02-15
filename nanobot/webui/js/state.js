@@ -44,6 +44,7 @@ export const dom = {
   subagentList: $("subagent-list"),
   statusBar: $("status-bar"),
   clearBtn: $("clear"),
+  exportBtn: $("export"),
   newChatBtn: $("new-chat"),
   sessionsBtn: $("sessions"),
   settingsBtn: $("settings"),

@@ -68,6 +68,7 @@ class WebUIChannel(BaseChannel):
     _log_sink_id: int | None = None
     _log_buffer: "deque[str]" = deque(maxlen=2000)
     _models_cache: bytes | None = None
+    _asset_cache: dict[str, bytes] = {}
 
     def __init__(self, config: WebUIConfig, bus: MessageBus, *, workspace: Path):
         super().__init__(config, bus)
@@ -111,9 +112,15 @@ class WebUIChannel(BaseChannel):
         return secrets.compare_digest(needed, (token or "").strip())
 
     def _read_asset_bytes(self, relpath: str) -> bytes:
+        # In-memory cache: assets are static and small, no need to re-read from disk
+        cached = WebUIChannel._asset_cache.get(relpath)
+        if cached is not None:
+            return cached
         try:
             p = pkgres.files("nanobot.webui").joinpath(relpath)
-            return p.read_bytes()
+            data = p.read_bytes()
+            WebUIChannel._asset_cache[relpath] = data
+            return data
         except Exception:
             return b""
 
@@ -349,10 +356,14 @@ class WebUIChannel(BaseChannel):
                     [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
                     body,
                 )
+            # Generate a per-request nonce for CSP script-src
+            nonce = secrets.token_urlsafe(24)
+            if relpath == "index.html":
+                body = body.replace(b"__CSP_NONCE__", nonce.encode("ascii"))
             csp = (
                 "default-src 'self'; "
                 "style-src 'self' 'unsafe-inline'; "
-                "script-src 'self' 'unsafe-inline'; "
+                f"script-src 'self' 'nonce-{nonce}'; "
                 "img-src 'self' data: blob:; "
                 "connect-src 'self' ws: wss:; "
                 "base-uri 'none'; "

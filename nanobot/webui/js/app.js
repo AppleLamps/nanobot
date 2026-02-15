@@ -14,6 +14,17 @@ import {
 } from "./render.js";
 import { connect, uploadFile, waitFor } from "./connection.js";
 
+/* --- HTML escape helper (prevents XSS from untrusted model names) --- */
+
+function escHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 /* --- Model picker helpers --- */
 
 function fmtPrice(perToken) {
@@ -148,13 +159,13 @@ function buildGroup(label, items) {
 
     const priceStr = isFree
       ? ""
-      : `<span class="mi-price">${fmtPrice(m.prompt)} in / ${fmtPrice(m.completion)} out</span>`;
-    const ctxStr = m.ctx ? `<span class="mi-ctx">${fmtCtx(m.ctx)} ctx</span>` : "";
+      : `<span class="mi-price">${escHtml(fmtPrice(m.prompt))} in / ${escHtml(fmtPrice(m.completion))} out</span>`;
+    const ctxStr = m.ctx ? `<span class="mi-ctx">${escHtml(fmtCtx(m.ctx))} ctx</span>` : "";
 
     row.innerHTML = `
       <div class="mi-left">
-        <span class="mi-name">${shortName(m.name, m.id)}</span>
-        <span class="mi-id">${m.id}</span>
+        <span class="mi-name">${escHtml(shortName(m.name, m.id))}</span>
+        <span class="mi-id">${escHtml(m.id)}</span>
       </div>
       <div class="mi-right">
         ${badges.join("")}
@@ -257,8 +268,9 @@ async function send() {
   }
 
   const userAttachments = [...state.attachments];
-  addRow("user", text || "(attachment)", { autoscroll: true, attachments: userAttachments });
-  const historyEntry = { role: "user", content: text || "", attachments: userAttachments };
+  const userTs = Date.now() / 1000;
+  addRow("user", text || "(attachment)", { autoscroll: true, attachments: userAttachments, ts: userTs });
+  const historyEntry = { role: "user", content: text || "", attachments: userAttachments, ts: userTs };
   state.serverHistory.push(historyEntry);
 
   dom.input.value = "";
@@ -473,11 +485,109 @@ if (dom.fileInput)
     renderAttachments();
   });
 
+/* Drag-and-drop file upload */
+{
+  const shell = document.querySelector(".shell");
+  if (shell) {
+    let dragCounter = 0;
+    shell.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      dragCounter++;
+      shell.classList.add("drag-over");
+    });
+    shell.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        shell.classList.remove("drag-over");
+      }
+    });
+    shell.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+    shell.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      shell.classList.remove("drag-over");
+      if (state.inflight) return;
+      const files = Array.from(e.dataTransfer.files || []);
+      let added = 0;
+      for (const f of files) {
+        const t = String(f.type || "").toLowerCase();
+        if (t.startsWith("image/") || t === "application/pdf") {
+          state.attachments.push(f);
+          added++;
+        }
+      }
+      if (added) {
+        renderAttachments();
+        toastMsg(`${added} file${added > 1 ? "s" : ""} attached.`);
+      }
+    });
+  }
+}
+
+/* Paste image from clipboard */
+if (dom.input) {
+  dom.input.addEventListener("paste", (e) => {
+    if (state.inflight) return;
+    const items = Array.from(e.clipboardData?.items || []);
+    let added = 0;
+    for (const item of items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const f = item.getAsFile();
+        if (f) {
+          state.attachments.push(f);
+          added++;
+        }
+      }
+    }
+    if (added) {
+      renderAttachments();
+      toastMsg(`Pasted ${added} image${added > 1 ? "s" : ""}.`);
+    }
+  });
+}
+
 /* Clear */
 if (dom.clearBtn)
   dom.clearBtn.addEventListener("click", () => {
     renderHistory([]);
     toastMsg("Cleared view.");
+  });
+
+/* Export conversation as Markdown */
+if (dom.exportBtn)
+  dom.exportBtn.addEventListener("click", () => {
+    if (!state.serverHistory.length) {
+      toastMsg("Nothing to export.");
+      return;
+    }
+    const lines = [];
+    lines.push(`# Conversation — ${state.sessionKey}`);
+    lines.push(``);
+    for (const m of state.serverHistory) {
+      const label = m.role === "user" ? "**You**" : "**Nanobot**";
+      lines.push(`### ${label}`);
+      lines.push(``);
+      lines.push(m.content || "(no content)");
+      lines.push(``);
+      lines.push(`---`);
+      lines.push(``);
+    }
+    const text = lines.join("\n");
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.href = URL.createObjectURL(blob);
+    a.download = `nanobot-chat-${ts}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    toastMsg("Conversation exported.");
   });
 
 /* New chat */
@@ -574,8 +684,13 @@ if (dom.modelsModal)
   dom.modelsModal.addEventListener("click", (e) => {
     if (e.target === dom.modelsModal) closeModelsModal();
   });
-if (dom.modelsSearch)
-  dom.modelsSearch.addEventListener("input", onModelsFilter);
+if (dom.modelsSearch) {
+  let _modelsSearchTimer = null;
+  dom.modelsSearch.addEventListener("input", () => {
+    if (_modelsSearchTimer) clearTimeout(_modelsSearchTimer);
+    _modelsSearchTimer = setTimeout(onModelsFilter, 150);
+  });
+}
 if (dom.modelsToolsOnly)
   dom.modelsToolsOnly.addEventListener("change", onModelsFilter);
 if (dom.modelsFreeOnly)
