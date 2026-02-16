@@ -15,13 +15,13 @@ from nanobot.agent.skills import SkillsLoader
 class ContextBuilder:
     """
     Builds the context (system prompt + messages) for the agent.
-    
+
     Assembles bootstrap files, memory, skills, and conversation history
     into a coherent prompt for the LLM.
     """
-    
+
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
-    
+
     def __init__(
         self,
         workspace: Path,
@@ -44,7 +44,7 @@ class ContextBuilder:
         if self._memory_db is None:
             self._memory_db = MemoryDB(self.workspace / "memory" / "memory.sqlite3")
         return self._memory_db
-    
+
     def build_system_prompt(
         self,
         skill_names: list[str] | None = None,
@@ -57,13 +57,13 @@ class ContextBuilder:
     ) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
-        
+
         Args:
             skill_names: Optional list of skills to include.
             session_key: Optional session key used for memory scoping.
             current_message: Current user message (used to retrieve relevant memories).
             history: Optional recent history (used to retrieve relevant memories).
-        
+
         Returns:
             Complete system prompt.
         """
@@ -99,7 +99,7 @@ class ContextBuilder:
             parts.append(skills_section)
 
         return "\n\n---\n\n".join(parts)
-    
+
     def _store_for_memory_scope(self, memory_scope: str, memory_key: str | None) -> MemoryStore:
         scope = (memory_scope or "session").strip().lower()
         if scope == "user" and memory_key:
@@ -117,12 +117,13 @@ class ContextBuilder:
     ) -> str:
         """Get the core identity section."""
         from datetime import datetime
+
         now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
         workspace_path = str(self.workspace.expanduser().resolve())
 
         active_store = self._store_for_memory_scope(memory_scope, memory_key or session_key)
-        active_scope_label = (
-            f"{(memory_scope or 'session').strip().lower()}:{memory_key or session_key or ''}".strip(":")
+        active_scope_label = f"{(memory_scope or 'session').strip().lower()}:{memory_key or session_key or ''}".strip(
+            ":"
         )
 
         return f"""# nanobot 🐈
@@ -223,7 +224,7 @@ For normal conversation, just respond with text — do not call the message tool
 ## Memory
 
 When remembering something important, write to the memory file above."""
-    
+
     def _get_cached(self, key: str, signature: tuple) -> str | None:
         cached = self._cache.get(key)
         if cached and cached[0] == signature:
@@ -442,7 +443,7 @@ When remembering something important, write to the memory file above."""
     def _get_always_skills_content(self) -> str:
         """Load always-on skills with caching by file mtimes."""
         always_skills = self.skills.get_always_skills()
-        files: list[tuple[str, float]] = []
+        files: list[tuple[str, str, float]] = []
         for name in always_skills:
             path = self.skills.resolve_skill_path(name)
             if not path:
@@ -540,7 +541,7 @@ Skills with available="false" need dependencies installed first - you can try in
 
     # Note: system prompt tail caching intentionally excludes memory because memory retrieval
     # depends on the current message (query-time).
-    
+
     def build_messages(
         self,
         history: list[dict[str, Any]],
@@ -611,7 +612,9 @@ Skills with available="false" need dependencies installed first - you can try in
 
             if mime.startswith("image/"):
                 b64 = base64.b64encode(p.read_bytes()).decode()
-                parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+                parts.append(
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}
+                )
                 continue
 
             if mime == "application/pdf":
@@ -633,55 +636,48 @@ Skills with available="false" need dependencies installed first - you can try in
         if len(parts) == 1:
             return text
         return parts
-    
+
     def add_tool_result(
-        self,
-        messages: list[dict[str, Any]],
-        tool_call_id: str,
-        tool_name: str,
-        result: str
+        self, messages: list[dict[str, Any]], tool_call_id: str, tool_name: str, result: str
     ) -> list[dict[str, Any]]:
         """
         Add a tool result to the message list.
-        
+
         Args:
             messages: Current message list.
             tool_call_id: ID of the tool call.
             tool_name: Name of the tool.
             result: Tool execution result.
-        
+
         Returns:
             Updated message list.
         """
-        messages.append({
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "name": tool_name,
-            "content": result
-        })
+        messages.append(
+            {"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": result}
+        )
         return messages
-    
+
     def add_assistant_message(
         self,
         messages: list[dict[str, Any]],
         content: str | None,
-        tool_calls: list[dict[str, Any]] | None = None
+        tool_calls: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Add an assistant message to the message list.
-        
+
         Args:
             messages: Current message list.
             content: Message content.
             tool_calls: Optional tool calls.
-        
+
         Returns:
             Updated message list.
         """
         msg: dict[str, Any] = {"role": "assistant", "content": content or ""}
-        
+
         if tool_calls:
             msg["tool_calls"] = tool_calls
-        
+
         messages.append(msg)
         return messages

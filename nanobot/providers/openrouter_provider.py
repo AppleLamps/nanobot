@@ -96,7 +96,7 @@ class OpenRouterProvider(LLMProvider):
                     llm_err = self._build_llm_error(resp.status_code, error_body)
                     if llm_err.retryable and attempt < self.max_retries:
                         last_error = llm_err
-                        await asyncio.sleep(2 ** attempt)
+                        await asyncio.sleep(2**attempt)
                         continue
                     raise llm_err
 
@@ -112,7 +112,7 @@ class OpenRouterProvider(LLMProvider):
                     retryable=True,
                 )
                 if attempt < self.max_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
                     continue
                 raise last_error from exc
 
@@ -123,11 +123,13 @@ class OpenRouterProvider(LLMProvider):
                     retryable=True,
                 )
                 if attempt < self.max_retries:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
                     continue
                 raise last_error from exc
 
-        raise last_error or LLMError("Unknown error after retries", status_code=None, retryable=False)
+        raise last_error or LLMError(
+            "Unknown error after retries", status_code=None, retryable=False
+        )
 
     @staticmethod
     def _parse_response(data: dict[str, Any]) -> LLMResponse:
@@ -147,11 +149,13 @@ class OpenRouterProvider(LLMProvider):
                     args = json.loads(args)
                 except json.JSONDecodeError:
                     args = {"raw": args}
-            tool_calls.append(ToolCallRequest(
-                id=tc.get("id", ""),
-                name=fn.get("name", ""),
-                arguments=args,
-            ))
+            tool_calls.append(
+                ToolCallRequest(
+                    id=tc.get("id", ""),
+                    name=fn.get("name", ""),
+                    arguments=args,
+                )
+            )
 
         usage_raw = data.get("usage") or {}
         usage = {}
@@ -174,7 +178,11 @@ class OpenRouterProvider(LLMProvider):
     def _build_llm_error(status_code: int, body: dict[str, Any] | str) -> LLMError:
         if isinstance(body, dict):
             error_obj = body.get("error", {})
-            message = error_obj.get("message", str(body)) if isinstance(error_obj, dict) else str(error_obj)
+            message = (
+                error_obj.get("message", str(body))
+                if isinstance(error_obj, dict)
+                else str(error_obj)
+            )
         else:
             message = body
         return LLMError(

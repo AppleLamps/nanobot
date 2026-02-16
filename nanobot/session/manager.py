@@ -3,51 +3,46 @@
 import asyncio
 import json
 import os
-from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from loguru import logger
 from filelock import FileLock
+from loguru import logger
 
-from nanobot.utils.helpers import ensure_dir, safe_filename, get_sessions_path
+from nanobot.utils.helpers import ensure_dir, get_sessions_path, safe_filename
 
 
 @dataclass
 class Session:
     """
     A conversation session.
-    
+
     Stores messages in JSONL format for easy reading and persistence.
     """
 
     _HISTORY_RETENTION_MULTIPLIER = 2  # Keep up to 2x max_messages; trim when exceeded.
-    
+
     key: str  # channel:chat_id
     messages: list[dict[str, Any]] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """Add a message to the session."""
-        msg = {
-            "role": role,
-            "content": content,
-            "timestamp": datetime.now().isoformat(),
-            **kwargs
-        }
+        msg = {"role": role, "content": content, "timestamp": datetime.now().isoformat(), **kwargs}
         self.messages.append(msg)
         self.updated_at = datetime.now()
-    
+
     def get_history(self, max_messages: int = 50) -> list[dict[str, Any]]:
         """
         Get message history for LLM context.
-        
+
         Args:
             max_messages: Maximum messages to return (non-positive values return an empty list).
-        
+
         Returns:
             List of messages in LLM format.
         """
@@ -62,8 +57,10 @@ class Session:
             self.updated_at = datetime.now()
 
         # Get recent messages
-        recent = self.messages[-max_messages:] if len(self.messages) > max_messages else self.messages
-        
+        recent = (
+            self.messages[-max_messages:] if len(self.messages) > max_messages else self.messages
+        )
+
         # Convert to LLM format (role, content, and optional media)
         result = []
         for m in recent:
@@ -72,7 +69,7 @@ class Session:
                 entry["media"] = m["media"]
             result.append(entry)
         return result
-    
+
     def clear(self) -> None:
         """Clear all messages in the session."""
         self.messages = []
@@ -82,10 +79,10 @@ class Session:
 class SessionManager:
     """
     Manages conversation sessions.
-    
+
     Sessions are stored as JSONL files in the sessions directory.
     """
-    
+
     def __init__(self, workspace: Path):
         self.workspace = workspace
         # Use helper so tests can monkeypatch Path.home().
@@ -128,14 +125,14 @@ class SessionManager:
 
         self._cache[key] = session
         return session
-    
+
     def _load(self, key: str) -> Session | None:
         """Load a session from disk."""
         path = self._get_session_path(key)
-        
+
         if not path.exists():
             return None
-        
+
         try:
             messages: list[dict[str, Any]] = []
             metadata: dict[str, Any] = {}
@@ -188,7 +185,7 @@ class SessionManager:
         except Exception as e:
             logger.warning(f"Failed to load session {key}: {e}")
             return None
-    
+
     def save(self, session: Session) -> None:
         """Save a session to disk."""
         self._save_to_disk(session)
@@ -234,39 +231,42 @@ class SessionManager:
                 logger.warning(f"Session save attempt {attempt + 1} failed for {session.key}: {e}")
                 if attempt < _max_retries:
                     import time as _time
+
                     _time.sleep(0.1 * (attempt + 1))
 
-        logger.error(f"Session save failed after {_max_retries + 1} attempts for {session.key}: {last_err}")
-    
+        logger.error(
+            f"Session save failed after {_max_retries + 1} attempts for {session.key}: {last_err}"
+        )
+
     def delete(self, key: str) -> bool:
         """
         Delete a session.
-        
+
         Args:
             key: Session key.
-        
+
         Returns:
             True if deleted, False if not found.
         """
         # Remove from cache
         self._cache.pop(key, None)
-        
+
         # Remove file
         path = self._get_session_path(key)
         if path.exists():
             path.unlink()
             return True
         return False
-    
+
     def list_sessions(self) -> list[dict[str, Any]]:
         """
         List all sessions.
-        
+
         Returns:
             List of session info dicts.
         """
         sessions = []
-        
+
         for path in self.sessions_dir.glob("*.jsonl"):
             try:
                 # Read just the metadata line
@@ -280,13 +280,15 @@ class SessionManager:
                             # reconstruct from the filename because it's lossy (underscores are valid
                             # in keys and cannot be distinguished from ":"->"_" replacement).
                             key = data.get("key") or path.stem
-                            sessions.append({
-                                "key": key,
-                                "created_at": data.get("created_at"),
-                                "updated_at": data.get("updated_at"),
-                                "path": str(path)
-                            })
+                            sessions.append(
+                                {
+                                    "key": key,
+                                    "created_at": data.get("created_at"),
+                                    "updated_at": data.get("updated_at"),
+                                    "path": str(path),
+                                }
+                            )
             except Exception:
                 continue
-        
+
         return sorted(sessions, key=lambda x: x.get("updated_at", ""), reverse=True)

@@ -79,8 +79,25 @@ class AgentLoop:
             int(getattr(cfg, "max_concurrent_messages", 1) or 1),
             1,
         )
+        self.max_pending_messages_per_session = max(
+            int(getattr(cfg, "max_pending_messages_per_session", 20) or 20),
+            1,
+        )
+        self.max_pending_messages_total = max(
+            int(getattr(cfg, "max_pending_messages_total", 200) or 200),
+            1,
+        )
+        self.session_idle_timeout_s = max(
+            int(getattr(cfg, "session_idle_timeout_s", 60) or 60),
+            5,
+        )
+        raw_override_channels = getattr(cfg, "trusted_session_override_channels", None) or []
+        self.trusted_session_override_channels = [
+            c.strip().lower() for c in raw_override_channels if isinstance(c, str) and c.strip()
+        ]
 
         self.tool_error_backoff = max(int(cfg.tool_error_backoff), 0)
+        self.tool_error_backoff_max_chars = max(int(cfg.tool_error_backoff_max_chars), 200)
         self.auto_tune_max_tokens = bool(cfg.auto_tune_max_tokens)
         self.auto_tune_initial_max_tokens = cfg.initial_max_tokens
         self.auto_tune_step = max(int(cfg.auto_tune_step), 1)
@@ -112,6 +129,9 @@ class AgentLoop:
             tool_error_backoff=cfg.tool_error_backoff,
             subagent_bootstrap_chars=cfg.subagent_bootstrap_chars,
             subagent_context_chars=cfg.subagent_context_chars,
+            subagent_announce_chars=cfg.subagent_announce_chars,
+            max_running=cfg.subagent_max_running,
+            use_fallbacks=cfg.subagent_use_fallbacks,
         )
 
         self._running = False
@@ -140,37 +160,44 @@ class AgentLoop:
     ) -> ToolRegistry:
         """Build a request-scoped tool registry (no shared mutable per-chat state)."""
         reg = ToolRegistry()
+        effective_restrict = restrict_workspace if isinstance(restrict_workspace, bool) else None
+        if (
+            effective_restrict is False
+            and self.exec_config.restrict_to_workspace
+            and not getattr(self.exec_config, "allow_unrestricted_workspace", False)
+        ):
+            effective_restrict = True
 
-        if isinstance(restrict_workspace, bool):
+        if isinstance(effective_restrict, bool):
             reg.register(
                 ReadFileTool(
                     workspace_root=self.workspace,
-                    restrict_to_workspace=restrict_workspace,
+                    restrict_to_workspace=effective_restrict,
                 )
             )
             reg.register(
                 WriteFileTool(
                     workspace_root=self.workspace,
-                    restrict_to_workspace=restrict_workspace,
+                    restrict_to_workspace=effective_restrict,
                 )
             )
             reg.register(
                 EditFileTool(
                     workspace_root=self.workspace,
-                    restrict_to_workspace=restrict_workspace,
+                    restrict_to_workspace=effective_restrict,
                 )
             )
             reg.register(
                 ListDirTool(
                     workspace_root=self.workspace,
-                    restrict_to_workspace=restrict_workspace,
+                    restrict_to_workspace=effective_restrict,
                 )
             )
             reg.register(
                 ExecTool(
                     working_dir=str(self.workspace),
                     timeout=self.exec_config.timeout,
-                    restrict_to_workspace=restrict_workspace,
+                    restrict_to_workspace=effective_restrict,
                 )
             )
             reg.register(SubagentControlTool(manager=self.subagents))
@@ -380,36 +407,120 @@ class AgentLoop:
         logger.info("Agent loop started")
 
         sem = asyncio.Semaphore(max(int(self.max_concurrent_messages), 1))
-        tails: dict[str, asyncio.Task[None]] = {}
-        tasks: set[asyncio.Task[None]] = set()
+        session_queues: dict[str, asyncio.Queue[InboundMessage]] = {}
+        session_workers: dict[str, asyncio.Task[None]] = {}
+        queues_lock = asyncio.Lock()
+        pending_lock = asyncio.Lock()
+        pending_total = 0
 
-        async def _process_one(msg: InboundMessage, session_key: str) -> None:
-            prev = tails.get(session_key)
-            if prev is not None:
-                try:
-                    await prev
-                except Exception:
-                    # If a previous message failed, still allow new messages to proceed.
-                    pass
+        async def _publish_busy(msg: InboundMessage, reason: str) -> None:
+            if msg.channel == "system":
+                logger.warning(f"Dropping system message due to backlog: {reason}")
+                return
+            err_channel = msg.channel
+            err_chat_id = msg.chat_id
+            if msg.channel == "system" and ":" in msg.chat_id:
+                err_channel, err_chat_id = msg.chat_id.split(":", 1)
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=err_channel,
+                    chat_id=err_chat_id,
+                    content="I'm currently busy and couldn't queue your request. Please try again shortly.",
+                )
+            )
 
-            async with sem:
-                try:
-                    response = await self._process_message(msg)
-                    if response:
-                        await self.bus.publish_outbound(response)
-                except Exception as e:
-                    logger.opt(exception=True).error(f"Error processing message: {e}")
-                    err_channel = msg.channel
-                    err_chat_id = msg.chat_id
-                    if msg.channel == "system" and ":" in msg.chat_id:
-                        err_channel, err_chat_id = msg.chat_id.split(":", 1)
-                    await self.bus.publish_outbound(
-                        OutboundMessage(
-                            channel=err_channel,
-                            chat_id=err_chat_id,
-                            content=f"Sorry, I encountered an error: {str(e)}",
-                        )
+        async def _process_one(msg: InboundMessage) -> None:
+            try:
+                response = await self._process_message(msg)
+                if response:
+                    await self.bus.publish_outbound(response)
+            except Exception as e:
+                logger.opt(exception=True).error(f"Error processing message: {e}")
+                err_channel = msg.channel
+                err_chat_id = msg.chat_id
+                if msg.channel == "system" and ":" in msg.chat_id:
+                    err_channel, err_chat_id = msg.chat_id.split(":", 1)
+                await self.bus.publish_outbound(
+                    OutboundMessage(
+                        channel=err_channel,
+                        chat_id=err_chat_id,
+                        content=f"Sorry, I encountered an error: {str(e)}",
                     )
+                )
+
+        async def _drop_oldest(queue: asyncio.Queue[InboundMessage]) -> bool:
+            nonlocal pending_total
+            try:
+                _ = queue.get_nowait()
+                queue.task_done()
+            except asyncio.QueueEmpty:
+                return False
+            async with pending_lock:
+                pending_total = max(pending_total - 1, 0)
+            return True
+
+        async def _session_worker(session_key: str, queue: asyncio.Queue[InboundMessage]) -> None:
+            nonlocal pending_total
+            try:
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(
+                            queue.get(), timeout=self.session_idle_timeout_s
+                        )
+                    except asyncio.TimeoutError:
+                        async with queues_lock:
+                            if queue.empty():
+                                session_queues.pop(session_key, None)
+                                session_workers.pop(session_key, None)
+                                return
+                        continue
+
+                    async with sem:
+                        await _process_one(msg)
+
+                    queue.task_done()
+                    async with pending_lock:
+                        pending_total = max(pending_total - 1, 0)
+            finally:
+                async with queues_lock:
+                    if session_workers.get(session_key) is asyncio.current_task():
+                        session_workers.pop(session_key, None)
+                        if queue.empty():
+                            session_queues.pop(session_key, None)
+
+        async def _enqueue(msg: InboundMessage, session_key: str) -> None:
+            nonlocal pending_total
+            async with queues_lock:
+                queue = session_queues.get(session_key)
+                if queue is None:
+                    queue = asyncio.Queue(maxsize=self.max_pending_messages_per_session)
+                    session_queues[session_key] = queue
+                if session_key not in session_workers:
+                    session_workers[session_key] = asyncio.create_task(
+                        _session_worker(session_key, queue)
+                    )
+
+            async with pending_lock:
+                if pending_total >= self.max_pending_messages_total:
+                    await _publish_busy(msg, "global backlog limit reached")
+                    return
+                pending_total += 1
+
+            if queue.full():
+                if msg.channel == "system" and await _drop_oldest(queue):
+                    pass
+                else:
+                    async with pending_lock:
+                        pending_total = max(pending_total - 1, 0)
+                    await _publish_busy(msg, "session backlog limit reached")
+                    return
+
+            try:
+                queue.put_nowait(msg)
+            except asyncio.QueueFull:
+                async with pending_lock:
+                    pending_total = max(pending_total - 1, 0)
+                await _publish_busy(msg, "session backlog limit reached")
 
         try:
             while self._running:
@@ -419,19 +530,12 @@ class AgentLoop:
                     continue
 
                 session_key = self._session_key_for_inbound(msg)
-                t = asyncio.create_task(_process_one(msg, session_key))
-                tails[session_key] = t
-                tasks.add(t)
-
-                def _cleanup(done: asyncio.Task[None], *, sk: str = session_key) -> None:
-                    tasks.discard(done)
-                    if tails.get(sk) is done:
-                        tails.pop(sk, None)
-
-                t.add_done_callback(_cleanup)
+                await _enqueue(msg, session_key)
         finally:
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+            if session_workers:
+                for task in session_workers.values():
+                    task.cancel()
+                await asyncio.gather(*session_workers.values(), return_exceptions=True)
 
     def stop(self) -> None:
         """Stop the agent loop."""
@@ -549,9 +653,18 @@ class AgentLoop:
                                 # Avoid dumping full command output to keep chat clean.
                                 tool_name, raw = last_tool_error
                                 hint = " ".join(raw.strip().split())
-                                if len(hint) > 240:
-                                    hint = hint[:240] + "..."
-                                final_content = f"{tool_error_backoff_message}\n\nLast tool error ({tool_name}): {hint}"
+                                if (
+                                    self.tool_error_backoff_max_chars > 0
+                                    and len(hint) > self.tool_error_backoff_max_chars
+                                ):
+                                    hint = (
+                                        hint[: self.tool_error_backoff_max_chars]
+                                        + "... [truncated]"
+                                    )
+                                final_content = (
+                                    f"{tool_error_backoff_message}\n\n"
+                                    f"Last tool error ({tool_name}): {hint}"
+                                )
                             else:
                                 final_content = tool_error_backoff_message
                             abort_loop = True
@@ -571,12 +684,18 @@ class AgentLoop:
 
             # Some models return content=None without tool calls when they
             # consider the task "done".  Nudge once to get a text summary.
-            if not nudged_for_response and (final_content is None or not final_content.strip()) and iteration < self.max_iterations:
+            if (
+                not nudged_for_response
+                and (final_content is None or not final_content.strip())
+                and iteration < self.max_iterations
+            ):
                 nudged_for_response = True
-                messages.append({
-                    "role": "user",
-                    "content": "Please reply with a brief summary of what you did.",
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "Please reply with a brief summary of what you did.",
+                    }
+                )
                 final_content = None
                 continue
 
@@ -609,11 +728,20 @@ class AgentLoop:
 
         meta_override = None
         try:
-            meta_override = msg.metadata.get("session_key") if isinstance(msg.metadata, dict) else None
+            if isinstance(msg.metadata, dict):
+                meta_override = msg.metadata.get("session_key")
         except Exception:
             meta_override = None
 
-        session_key = session_key_override or (meta_override if isinstance(meta_override, str) and meta_override else None) or msg.session_key
+        channel_key = (msg.channel or "").strip().lower()
+        if channel_key not in self.trusted_session_override_channels:
+            meta_override = None
+
+        session_key = (
+            session_key_override
+            or (meta_override if isinstance(meta_override, str) and meta_override else None)
+            or msg.session_key
+        )
         session = self.sessions.get_or_create(session_key)
         allowed_tools = session.metadata.get("allowed_tools", self.allowed_tools)
         restrict_workspace = session.metadata.get("restrict_workspace")
@@ -648,7 +776,9 @@ class AgentLoop:
             current_message=msg.content,
             session_key=session_key,
             memory_scope=self.memory_scope,
-            memory_key=(f"{msg.channel}:{msg.sender_id}" if self.memory_scope == "user" else session_key),
+            memory_key=(
+                f"{msg.channel}:{msg.sender_id}" if self.memory_scope == "user" else session_key
+            ),
             media=msg.media if msg.media else None,
         )
 
@@ -657,8 +787,7 @@ class AgentLoop:
             messages=messages,
             tools=tools,
             tool_error_backoff_message=(
-                "I'm hitting repeated tool errors. "
-                "Please rephrase or provide more specific inputs."
+                "I'm hitting repeated tool errors. Please rephrase or provide more specific inputs."
             ),
             no_response_message="I've completed processing but have no response to give.",
             channel=msg.channel,
@@ -724,11 +853,12 @@ class AgentLoop:
                 origin_channel=msg.channel,
                 origin_chat_id=msg.chat_id,
             )
+            ok = bool(result.get("ok", True)) if isinstance(result, dict) else True
             return OutboundMessage(
                 channel=msg.channel,
                 chat_id=msg.chat_id,
                 content=result.get("message") or "",
-                metadata={"type": "subagent_event", "data": {"ok": True, **result}},
+                metadata={"type": "subagent_event", "data": {"ok": ok, **result}},
             )
         if action == "subagent_cancel":
             task_id = str(control.get("task_id") or "").strip()

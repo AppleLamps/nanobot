@@ -2,17 +2,18 @@
 
 import os
 import re
-from pathlib import Path
 import warnings
+from pathlib import Path, PureWindowsPath
 
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings
-from pathlib import PureWindowsPath
 
 
 def _default_workspace() -> str:
     from nanobot.utils.helpers import get_data_path
+
     return str(get_data_path() / "workspace")
+
 
 def _normalize_path_for_platform(raw: str) -> str:
     """
@@ -42,6 +43,7 @@ def _normalize_path_for_platform(raw: str) -> str:
 
 class WhatsAppConfig(BaseModel):
     """WhatsApp channel configuration."""
+
     enabled: bool = False
     bridge_url: str = "ws://localhost:3001"
     allow_from: list[str] = Field(default_factory=list)  # Allowed phone numbers
@@ -50,15 +52,19 @@ class WhatsAppConfig(BaseModel):
 
 class TelegramConfig(BaseModel):
     """Telegram channel configuration."""
+
     enabled: bool = False
     token: str = ""  # Bot token from @BotFather
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs or usernames
-    proxy: str | None = None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
+    proxy: str | None = (
+        None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
+    )
     rate_limit_s: int = 0  # Minimum seconds between messages from the same sender
 
 
 class FeishuConfig(BaseModel):
     """Feishu/Lark channel configuration using WebSocket long connection."""
+
     enabled: bool = False
     app_id: str = ""  # App ID from Feishu Open Platform
     app_secret: str = ""  # App Secret from Feishu Open Platform
@@ -77,10 +83,12 @@ class WebUIConfig(BaseModel):
     auth_token: str = ""  # If set, requires `?token=...` for both HTTP and WS.
     allow_from: list[str] = Field(default_factory=list)  # Allowed sender IDs (advanced)
     rate_limit_s: int = 0  # Minimum seconds between messages from the same sender
+    allow_unrestricted_workspace: bool = False  # Allow per-session restrict_workspace=false
 
 
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
+
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
@@ -89,6 +97,7 @@ class ChannelsConfig(BaseModel):
 
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
+
     workspace: str = Field(default_factory=_default_workspace)
     provider: str = ""
     model: str = "openai/gpt-oss-120b:exacto"
@@ -103,6 +112,11 @@ class AgentDefaults(BaseModel):
     # Concurrency: maximum number of different chats/sessions processed in parallel.
     # Messages from the same session are still processed sequentially.
     max_concurrent_messages: int = 4
+    # Backpressure: cap queued messages to prevent unbounded memory growth.
+    max_pending_messages_per_session: int = 20
+    max_pending_messages_total: int = 200
+    session_idle_timeout_s: int = 60
+    trusted_session_override_channels: list[str] = Field(default_factory=lambda: ["webui"])
     # Prompt budgets (characters; sliding-window truncation)
     memory_max_chars: int = 6000
     skills_max_chars: int = 12000
@@ -111,8 +125,12 @@ class AgentDefaults(BaseModel):
     # Subagent prompt budgets (characters)
     subagent_bootstrap_chars: int = 3000
     subagent_context_chars: int = 3000
+    subagent_announce_chars: int = 4000
+    subagent_max_running: int = 4
+    subagent_use_fallbacks: bool = True
     # Tool error backoff
     tool_error_backoff: int = 3
+    tool_error_backoff_max_chars: int = 1200
     # Auto-tune response length
     auto_tune_max_tokens: bool = False
     initial_max_tokens: int | None = None
@@ -123,17 +141,20 @@ class AgentDefaults(BaseModel):
 
 class AgentsConfig(BaseModel):
     """Agent configuration."""
+
     defaults: AgentDefaults = Field(default_factory=AgentDefaults)
 
 
 class ProviderConfig(BaseModel):
     """LLM provider configuration."""
+
     api_key: str = ""
     api_base: str | None = None
 
 
 class ProvidersConfig(BaseModel):
     """Configuration for LLM providers."""
+
     anthropic: ProviderConfig = Field(default_factory=ProviderConfig)
     openai: ProviderConfig = Field(default_factory=ProviderConfig)
     openrouter: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -145,35 +166,42 @@ class ProvidersConfig(BaseModel):
 
 class GatewayConfig(BaseModel):
     """Gateway/server configuration."""
+
     host: str = "0.0.0.0"
     port: int = 18790
 
 
 class WebSearchConfig(BaseModel):
     """Web search tool configuration."""
+
     api_key: str = ""  # Brave Search API key
     max_results: int = 5
 
 
 class FirecrawlConfig(BaseModel):
     """Firecrawl scrape tool configuration."""
+
     api_key: str = ""  # Firecrawl API key
 
 
 class WebToolsConfig(BaseModel):
     """Web tools configuration."""
+
     search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     firecrawl: FirecrawlConfig = Field(default_factory=FirecrawlConfig)
 
 
 class ExecToolConfig(BaseModel):
     """Shell exec tool configuration."""
+
     timeout: int = 60
     restrict_to_workspace: bool = True  # If true, block commands accessing paths outside workspace
+    allow_unrestricted_workspace: bool = False
 
 
 class ToolsConfig(BaseModel):
     """Tools configuration."""
+
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     allowed_tools: list[str] | None = None  # Optional allowlist of tool names
@@ -181,6 +209,7 @@ class ToolsConfig(BaseModel):
 
 class Config(BaseSettings):
     """Root configuration for nanobot."""
+
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
@@ -206,7 +235,9 @@ class Config(BaseSettings):
             "bedrock": {"bedrock"},
         }
         known_prefixes = {p for prefixes in provider_prefixes.values() for p in prefixes}
-        if model_prefix in known_prefixes and model_prefix not in provider_prefixes.get(provider, {provider}):
+        if model_prefix in known_prefixes and model_prefix not in provider_prefixes.get(
+            provider, {provider}
+        ):
             warnings.warn(
                 f"Provider '{provider}' does not match model prefix '{model_prefix}'.",
                 RuntimeWarning,
@@ -215,6 +246,10 @@ class Config(BaseSettings):
         return self
 
     def _select_provider(self) -> tuple[str | None, ProviderConfig | None]:
+        """Select the configured provider in priority order.
+
+        Important: selection must be shared by get_api_key() and get_api_base() to avoid
+        mismatched (api_key, api_base) pairs.
         """
         explicit = (self.agents.defaults.provider or "").strip().lower()
         if explicit:
@@ -222,11 +257,7 @@ class Config(BaseSettings):
             if cfg is not None:
                 return explicit, cfg
             return None, None
-        Select the configured provider in priority order.
 
-        Important: selection must be shared by get_api_key() and get_api_base() to avoid
-        mismatched (api_key, api_base) pairs.
-        """
         if self.providers.openrouter.api_key:
             return "openrouter", self.providers.openrouter
         if self.providers.anthropic.api_key:
@@ -246,20 +277,20 @@ class Config(BaseSettings):
             return "vllm", self.providers.vllm
 
         return None, None
-    
+
     @property
     def workspace_path(self) -> Path:
         """Get expanded workspace path."""
         raw = _normalize_path_for_platform(self.agents.defaults.workspace)
         return Path(raw).expanduser()
-    
+
     def get_api_key(self) -> str | None:
         """Get the API key for the selected provider (see _select_provider())."""
         _name, cfg = self._select_provider()
         if not cfg:
             return None
         return cfg.api_key or None
-    
+
     def get_api_base(self) -> str | None:
         """Get the API base URL for the selected provider (see _select_provider())."""
         name, cfg = self._select_provider()
@@ -268,7 +299,7 @@ class Config(BaseSettings):
         if name == "openrouter":
             return cfg.api_base or "https://openrouter.ai/api/v1"
         return cfg.api_base
-    
+
     def validate_provider(self) -> list[str]:
         """Check for common provider misconfiguration. Returns a list of warnings."""
         warnings_list: list[str] = []

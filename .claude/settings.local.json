@@ -4,7 +4,10 @@
       "WebFetch(domain:openrouter.ai)",
       "Bash(python -m pytest:*)",
       "Bash(find:*)",
-      "Bash(python -m ruff check:*)"
+      "Bash(python -m ruff check:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(python:*)",
+      "Bash(ruff check:*)"
     ]
   }
 }

@@ -18,7 +18,9 @@ from pathlib import Path
 
 def validate_name(name: str) -> str:
     """Validate skill name: lowercase, digits, hyphens only, under 64 chars."""
-    if not re.match(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$", name) and not re.match(r"^[a-z0-9]$", name):
+    if not re.match(r"^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$", name) and not re.match(
+        r"^[a-z0-9]$", name
+    ):
         raise ValueError(
             f"Invalid skill name '{name}'. Use lowercase letters, digits, and hyphens only (max 64 chars)."
         )
@@ -105,7 +107,9 @@ def main():
         sys.exit(1)
 
     output_dir = Path(args.path).expanduser().resolve()
-    resources = [r.strip() for r in args.resources.split(",") if r.strip()] if args.resources else []
+    resources = (
+        [r.strip() for r in args.resources.split(",") if r.strip()] if args.resources else []
+    )
 
     valid_resources = {"scripts", "references", "assets"}
     invalid = set(resources) - valid_resources

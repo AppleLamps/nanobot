@@ -21,7 +21,7 @@ class ExecTool(Tool):
 
     # Retry once on transient failures.
     max_retries = 1
-    
+
     def __init__(
         self,
         timeout: int = 60,
@@ -33,39 +33,39 @@ class ExecTool(Tool):
         self.timeout = timeout
         self.working_dir = working_dir
         self.deny_patterns = deny_patterns or [
-            r"\brm\s+-[rf]{1,2}\b",          # rm -r, rm -rf, rm -fr
-            r"\bdel\s+/[fq]\b",              # del /f, del /q
-            r"\brmdir\s+/s\b",               # rmdir /s
-            r"\b(format|mkfs|diskpart)\b",   # disk operations
-            r"\bdd\s+if=",                   # dd
-            r">\s*/dev/sd",                  # write to disk
+            r"\brm\s+-[rf]{1,2}\b",  # rm -r, rm -rf, rm -fr
+            r"\bdel\s+/[fq]\b",  # del /f, del /q
+            r"\brmdir\s+/s\b",  # rmdir /s
+            r"\b(format|mkfs|diskpart)\b",  # disk operations
+            r"\bdd\s+if=",  # dd
+            r">\s*/dev/sd",  # write to disk
             r"\b(shutdown|reboot|poweroff)\b",  # system power
-            r":\(\)\s*\{.*\};\s*:",          # fork bomb
+            r":\(\)\s*\{.*\};\s*:",  # fork bomb
         ]
         # Add extra Windows/PowerShell patterns when running on Windows.
         if sys.platform.startswith("win"):
             self.deny_patterns.extend(
                 [
-                    r"\bremove-item\b.*\b(-recurse|-r)\b",            # Remove-Item -Recurse
-                    r"\bremove-item\b.*\b(-force|-f)\b",              # Remove-Item -Force
-                    r"\bri\b.*\b(-recurse|-r)\b",                     # ri -Recurse (alias)
-                    r"\bri\b.*\b(-force|-f)\b",                       # ri -Force (alias)
-                    r"\bdel\b\s+/.+\b",                               # del /... (broad)
-                    r"\brd\b\s+/s\b",                                 # rd /s
-                    r"\breg\s+delete\b",                              # reg delete
-                    r"\bformat-volume\b",                             # Format-Volume
-                    r"\bclear-disk\b",                                # Clear-Disk
-                    r"\bremove-partition\b",                          # Remove-Partition
-                    r"\bstop-computer\b|\brestart-computer\b",        # Stop/Restart-Computer
+                    r"\bremove-item\b.*\b(-recurse|-r)\b",  # Remove-Item -Recurse
+                    r"\bremove-item\b.*\b(-force|-f)\b",  # Remove-Item -Force
+                    r"\bri\b.*\b(-recurse|-r)\b",  # ri -Recurse (alias)
+                    r"\bri\b.*\b(-force|-f)\b",  # ri -Force (alias)
+                    r"\bdel\b\s+/.+\b",  # del /... (broad)
+                    r"\brd\b\s+/s\b",  # rd /s
+                    r"\breg\s+delete\b",  # reg delete
+                    r"\bformat-volume\b",  # Format-Volume
+                    r"\bclear-disk\b",  # Clear-Disk
+                    r"\bremove-partition\b",  # Remove-Partition
+                    r"\bstop-computer\b|\brestart-computer\b",  # Stop/Restart-Computer
                 ]
             )
         self.allow_patterns = allow_patterns or []
         self.restrict_to_workspace = restrict_to_workspace
-    
+
     @property
     def name(self) -> str:
         return "exec"
-    
+
     @property
     def description(self) -> str:
         return (
@@ -75,24 +75,21 @@ class ExecTool(Tool):
             "Destructive commands (rm -rf, format, etc.) are blocked. "
             "API keys are stripped from the subprocess environment."
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "command": {
-                    "type": "string",
-                    "description": "The shell command to execute"
-                },
+                "command": {"type": "string", "description": "The shell command to execute"},
                 "working_dir": {
                     "type": "string",
-                    "description": "Optional working directory for the command"
-                }
+                    "description": "Optional working directory for the command",
+                },
             },
-            "required": ["command"]
+            "required": ["command"],
         }
-    
+
     async def execute(self, command: str, working_dir: str | None = None, **kwargs: Any) -> str:
         base_root = self._normalize_path(self.working_dir or os.getcwd())
         cwd = self._normalize_path(working_dir or self.working_dir or os.getcwd())
@@ -114,7 +111,7 @@ class ExecTool(Tool):
         # Never pass through obvious secret env vars (API keys/tokens). This prevents trivial
         # leaks via `env`/`printenv` and reduces the blast radius of subprocess execution.
         env = self._build_subprocess_env()
-        
+
         try:
             process = await asyncio.create_subprocess_shell(
                 command,
@@ -123,38 +120,35 @@ class ExecTool(Tool):
                 cwd=cwd,
                 env=env,
             )
-            
+
             try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.timeout
-                )
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
             except asyncio.TimeoutError:
                 process.kill()
                 return f"Error: Command timed out after {self.timeout} seconds"
-            
+
             output_parts = []
-            
+
             if stdout:
                 output_parts.append(stdout.decode("utf-8", errors="replace"))
-            
+
             if stderr:
                 stderr_text = stderr.decode("utf-8", errors="replace")
                 if stderr_text.strip():
                     output_parts.append(f"STDERR:\n{stderr_text}")
-            
+
             if process.returncode != 0:
                 output_parts.append(f"\nExit code: {process.returncode}")
-            
+
             result = "\n".join(output_parts) if output_parts else "(no output)"
-            
+
             # Truncate very long output
             max_len = 10000
             if len(result) > max_len:
                 result = result[:max_len] + f"\n... (truncated, {len(result) - max_len} more chars)"
-            
+
             return result
-            
+
         except Exception as e:
             return f"Error executing command: {str(e)}"
 
@@ -170,7 +164,7 @@ class ExecTool(Tool):
             return raw
 
         # Map "C:\Users\..." -> "/mnt/c/Users/..." when "/mnt/<drive>" exists.
-        if os.name != "nt" and re.match(r"^[A-Za-z]:\\\\", s):
+        if os.name != "nt" and re.match(r"^[A-Za-z]:\\", s):
             try:
                 wp = PureWindowsPath(s)
                 drive = (wp.drive or "")[:1].lower()
@@ -268,7 +262,9 @@ class ExecTool(Tool):
                 try:
                     target_path = Path(self._normalize_path(target)).expanduser().resolve()
                 except Exception:
-                    return "Error: Command blocked by safety guard (invalid directory change detected)"
+                    return (
+                        "Error: Command blocked by safety guard (invalid directory change detected)"
+                    )
 
                 if root_path not in target_path.parents and target_path != root_path:
                     return "Error: Command blocked by safety guard (directory change outside workspace)"

@@ -31,11 +31,11 @@ class ReadFileTool(Tool):
     def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
         self.workspace_root = workspace_root
         self.restrict_to_workspace = restrict_to_workspace
-    
+
     @property
     def name(self) -> str:
         return "read_file"
-    
+
     @property
     def description(self) -> str:
         return (
@@ -43,25 +43,18 @@ class ReadFileTool(Tool):
             "Paths can be relative (resolved from workspace root) or absolute. "
             "Returns the full UTF-8 text content."
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The file path to read"
-                }
-            },
-            "required": ["path"]
+            "properties": {"path": {"type": "string", "description": "The file path to read"}},
+            "required": ["path"],
         }
-    
+
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
-            file_path, error = _resolve_path(
-                path, self.workspace_root, self.restrict_to_workspace
-            )
+            file_path, error = _resolve_path(path, self.workspace_root, self.restrict_to_workspace)
             if error:
                 return error
             if file_path is None:
@@ -70,7 +63,7 @@ class ReadFileTool(Tool):
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
                 return f"Error: Not a file: {path}"
-            
+
             content = file_path.read_text(encoding="utf-8")
             return content
         except PermissionError:
@@ -83,9 +76,7 @@ class ReadFileTool(Tool):
         raw = params.get("path")
         if not isinstance(raw, str) or not raw:
             return None
-        file_path, error = _resolve_path(
-            raw, self.workspace_root, self.restrict_to_workspace
-        )
+        file_path, error = _resolve_path(raw, self.workspace_root, self.restrict_to_workspace)
         if error or file_path is None:
             return None
         try:
@@ -103,11 +94,11 @@ class WriteFileTool(Tool):
     def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
         self.workspace_root = workspace_root
         self.restrict_to_workspace = restrict_to_workspace
-    
+
     @property
     def name(self) -> str:
         return "write_file"
-    
+
     @property
     def description(self) -> str:
         return (
@@ -115,29 +106,21 @@ class WriteFileTool(Tool):
             "Overwrites the file if it already exists. "
             "Use edit_file instead when you only need to change part of a file."
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The file path to write to"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The content to write"
-                }
+                "path": {"type": "string", "description": "The file path to write to"},
+                "content": {"type": "string", "description": "The content to write"},
             },
-            "required": ["path", "content"]
+            "required": ["path", "content"],
         }
-    
+
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
-            file_path, error = _resolve_path(
-                path, self.workspace_root, self.restrict_to_workspace
-            )
+            file_path, error = _resolve_path(path, self.workspace_root, self.restrict_to_workspace)
             if error:
                 return error
             if file_path is None:
@@ -157,11 +140,11 @@ class EditFileTool(Tool):
     def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
         self.workspace_root = workspace_root
         self.restrict_to_workspace = restrict_to_workspace
-    
+
     @property
     def name(self) -> str:
         return "edit_file"
-    
+
     @property
     def description(self) -> str:
         return (
@@ -170,45 +153,34 @@ class EditFileTool(Tool):
             "must appear exactly once in the file. If it appears multiple times, "
             "include more surrounding context to make it unique."
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The file path to edit"
-                },
-                "old_text": {
-                    "type": "string",
-                    "description": "The exact text to find and replace"
-                },
-                "new_text": {
-                    "type": "string",
-                    "description": "The text to replace with"
-                }
+                "path": {"type": "string", "description": "The file path to edit"},
+                "old_text": {"type": "string", "description": "The exact text to find and replace"},
+                "new_text": {"type": "string", "description": "The text to replace with"},
             },
-            "required": ["path", "old_text", "new_text"]
+            "required": ["path", "old_text", "new_text"],
         }
-    
+
     async def execute(self, path: str, old_text: str, new_text: str, **kwargs: Any) -> str:
         try:
-            file_path, error = _resolve_path(
-                path, self.workspace_root, self.restrict_to_workspace
-            )
+            file_path, error = _resolve_path(path, self.workspace_root, self.restrict_to_workspace)
             if error:
                 return error
             if file_path is None:
                 return f"Error: Invalid path: {path}"
             if not file_path.exists():
                 return f"Error: File not found: {path}"
-            
+
             content = file_path.read_text(encoding="utf-8")
-            
+
             if old_text not in content:
-                return f"Error: old_text not found in file. Make sure it matches exactly."
-            
+                return "Error: old_text not found in file. Make sure it matches exactly."
+
             # Count occurrences
             count = content.count(old_text)
             if count > 1:
@@ -216,10 +188,10 @@ class EditFileTool(Tool):
                     f"Error: old_text appears {count} times. "
                     "Please provide more context to make it unique."
                 )
-            
+
             new_content = content.replace(old_text, new_text, 1)
             file_path.write_text(new_content, encoding="utf-8")
-            
+
             return f"Successfully edited {path}"
         except PermissionError:
             return f"Error: Permission denied: {path}"
@@ -233,36 +205,29 @@ class ListDirTool(Tool):
     def __init__(self, workspace_root: Path | None = None, restrict_to_workspace: bool = False):
         self.workspace_root = workspace_root
         self.restrict_to_workspace = restrict_to_workspace
-    
+
     @property
     def name(self) -> str:
         return "list_dir"
-    
+
     @property
     def description(self) -> str:
         return (
             "List the immediate contents of a directory (files and subdirectories). "
             "Does not recurse into subdirectories."
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         return {
             "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "The directory path to list"
-                }
-            },
-            "required": ["path"]
+            "properties": {"path": {"type": "string", "description": "The directory path to list"}},
+            "required": ["path"],
         }
-    
+
     async def execute(self, path: str, **kwargs: Any) -> str:
         try:
-            dir_path, error = _resolve_path(
-                path, self.workspace_root, self.restrict_to_workspace
-            )
+            dir_path, error = _resolve_path(path, self.workspace_root, self.restrict_to_workspace)
             if error:
                 return error
             if dir_path is None:
@@ -271,15 +236,15 @@ class ListDirTool(Tool):
                 return f"Error: Directory not found: {path}"
             if not dir_path.is_dir():
                 return f"Error: Not a directory: {path}"
-            
+
             items = []
             for item in sorted(dir_path.iterdir()):
                 prefix = "📁 " if item.is_dir() else "📄 "
                 items.append(f"{prefix}{item.name}")
-            
+
             if not items:
                 return f"Directory {path} is empty"
-            
+
             return "\n".join(items)
         except PermissionError:
             return f"Error: Permission denied: {path}"

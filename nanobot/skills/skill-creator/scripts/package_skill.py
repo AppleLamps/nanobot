@@ -63,7 +63,7 @@ def validate_skill(skill_dir: Path) -> list[str]:
             )
 
     # Check body has content beyond frontmatter
-    body = content[match.end():].strip()
+    body = content[match.end() :].strip()
     if len(body) < 50:
         errors.append("SKILL.md body is too short. Add meaningful instructions.")
 
@@ -71,7 +71,9 @@ def validate_skill(skill_dir: Path) -> list[str]:
     extraneous = {"README.md", "CHANGELOG.md", "INSTALLATION_GUIDE.md", "QUICK_REFERENCE.md"}
     for f in skill_dir.iterdir():
         if f.name in extraneous and f.name != "SKILL.md":
-            errors.append(f"Extraneous file '{f.name}' — skills should only contain SKILL.md + resources.")
+            errors.append(
+                f"Extraneous file '{f.name}' — skills should only contain SKILL.md + resources."
+            )
 
     return errors
 

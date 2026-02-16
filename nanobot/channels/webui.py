@@ -6,13 +6,13 @@ Implemented as a channel so it reuses the existing MessageBus/AgentLoop routing.
 from __future__ import annotations
 
 import asyncio
-import importlib.resources as pkgres
 import base64
+import importlib.resources as pkgres
 import json
 import secrets
 import time
-from dataclasses import dataclass
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -37,6 +37,7 @@ class _ClientKey:
 def _is_loopback_host(host: str) -> bool:
     h = (host or "").strip().lower()
     return h in ("127.0.0.1", "localhost", "::1")
+
 
 def _token_is_weak(token: str) -> bool:
     """
@@ -76,7 +77,7 @@ class WebUIChannel(BaseChannel):
         self.workspace = Path(workspace)
         self._ensure_log_sink()
         self._sessions = SessionManager(self.workspace)
-        self._uploads_dir = (self.workspace / "uploads")
+        self._uploads_dir = self.workspace / "uploads"
         self._uploads_dir.mkdir(parents=True, exist_ok=True)
 
         self._server: Any | None = None
@@ -158,7 +159,9 @@ class WebUIChannel(BaseChannel):
         """Return a slim JSON list of models from openrouter-models.json (cached)."""
         if cls._models_cache is not None:
             return cls._models_cache
-        models_path = Path(__file__).resolve().parent.parent / "providers" / "openrouter-models.json"
+        models_path = (
+            Path(__file__).resolve().parent.parent / "providers" / "openrouter-models.json"
+        )
         try:
             raw = json.loads(models_path.read_text(encoding="utf-8"))
         except Exception:
@@ -176,16 +179,18 @@ class WebUIChannel(BaseChannel):
             top = m.get("top_provider") or {}
             arch = m.get("architecture") or {}
             params = m.get("supported_parameters") or []
-            slim.append({
-                "id": m["id"],
-                "name": m.get("name", m["id"]),
-                "ctx": m.get("context_length", 0),
-                "prompt": pricing.get("prompt", "0"),
-                "completion": pricing.get("completion", "0"),
-                "maxOut": top.get("max_completion_tokens", 0),
-                "tools": "tools" in params,
-                "vision": "image" in (arch.get("input_modalities") or []),
-            })
+            slim.append(
+                {
+                    "id": m["id"],
+                    "name": m.get("name", m["id"]),
+                    "ctx": m.get("context_length", 0),
+                    "prompt": pricing.get("prompt", "0"),
+                    "completion": pricing.get("completion", "0"),
+                    "maxOut": top.get("max_completion_tokens", 0),
+                    "tools": "tools" in params,
+                    "vision": "image" in (arch.get("input_modalities") or []),
+                }
+            )
         cls._models_cache = json.dumps(slim, separators=(",", ":")).encode("utf-8")
         return cls._models_cache
 
@@ -319,7 +324,10 @@ class WebUIChannel(BaseChannel):
                     try:
                         fpath = (self.workspace / relpath).resolve()
                         # Security: must be inside the uploads directory
-                        if self._uploads_dir.resolve() in fpath.parents or fpath == self._uploads_dir.resolve():
+                        if (
+                            self._uploads_dir.resolve() in fpath.parents
+                            or fpath == self._uploads_dir.resolve()
+                        ):
                             if fpath.is_file():
                                 body = fpath.read_bytes()
                                 return _reply(
@@ -353,7 +361,10 @@ class WebUIChannel(BaseChannel):
                 body = b"missing asset\n"
                 return _reply(
                     500,
-                    [("Content-Type", "text/plain; charset=utf-8"), ("Content-Length", str(len(body)))],
+                    [
+                        ("Content-Type", "text/plain; charset=utf-8"),
+                        ("Content-Length", str(len(body))),
+                    ],
                     body,
                 )
             # Generate a per-request nonce for CSP script-src
@@ -437,7 +448,16 @@ class WebUIChannel(BaseChannel):
             history = session.get_history(max_messages=200)
         except Exception:
             history = []
-        await ws.send(json.dumps({"type": "history", "chat_id": chat_id, "session_key": session_key, "messages": history}))
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "history",
+                    "chat_id": chat_id,
+                    "session_key": session_key,
+                    "messages": history,
+                }
+            )
+        )
 
     async def start(self) -> None:
         """Start the Web UI server and keep it running."""
@@ -529,7 +549,9 @@ class WebUIChannel(BaseChannel):
         try:
             if isinstance(msg.metadata, dict) and isinstance(msg.metadata.get("type"), str):
                 msg_type = str(msg.metadata.get("type"))
-                extra_data = msg.metadata.get("data") if isinstance(msg.metadata.get("data"), dict) else None
+                extra_data = (
+                    msg.metadata.get("data") if isinstance(msg.metadata.get("data"), dict) else None
+                )
         except Exception:
             msg_type = "assistant"
 
@@ -573,7 +595,9 @@ class WebUIChannel(BaseChannel):
         if not session_key:
             session_key = f"{self.name}:{chat_id}"
 
-        key = _ClientKey(chat_id=str(chat_id), sender_id=str(sender_id), session_key=str(session_key))
+        key = _ClientKey(
+            chat_id=str(chat_id), sender_id=str(sender_id), session_key=str(session_key)
+        )
 
         # Disconnect duplicate clients for the same session+sender.
         # Remove old entries from tracking BEFORE closing, so _drop_client
@@ -606,7 +630,16 @@ class WebUIChannel(BaseChannel):
                 except Exception:
                     pass
 
-        await ws.send(json.dumps({"type": "session", "chat_id": key.chat_id, "sender_id": key.sender_id, "session_key": key.session_key}))
+        await ws.send(
+            json.dumps(
+                {
+                    "type": "session",
+                    "chat_id": key.chat_id,
+                    "sender_id": key.sender_id,
+                    "session_key": key.session_key,
+                }
+            )
+        )
         await self._send_history(ws, chat_id=key.chat_id, session_key=key.session_key)
         await self._send_settings(ws, session_key=key.session_key)
         logger.info(f"WebUI client connected chat_id={key.chat_id} sender_id={key.sender_id}")
@@ -678,10 +711,24 @@ class WebUIChannel(BaseChannel):
                 old = self._clients.get(ws)
                 if old is not None:
                     self._by_chat.get(old.chat_id, set()).discard(ws)
-                    self._clients[ws] = _ClientKey(chat_id=new_chat_id, sender_id=old.sender_id, session_key=f"{self.name}:{new_chat_id}")
+                    self._clients[ws] = _ClientKey(
+                        chat_id=new_chat_id,
+                        sender_id=old.sender_id,
+                        session_key=f"{self.name}:{new_chat_id}",
+                    )
                     self._by_chat.setdefault(new_chat_id, set()).add(ws)
-            await ws.send(json.dumps({"type": "session", "chat_id": new_chat_id, "session_key": f"{self.name}:{new_chat_id}"}))
-            await self._send_history(ws, chat_id=new_chat_id, session_key=f"{self.name}:{new_chat_id}")
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "session",
+                        "chat_id": new_chat_id,
+                        "session_key": f"{self.name}:{new_chat_id}",
+                    }
+                )
+            )
+            await self._send_history(
+                ws, chat_id=new_chat_id, session_key=f"{self.name}:{new_chat_id}"
+            )
             await self._send_settings(ws, session_key=f"{self.name}:{new_chat_id}")
             return
 
@@ -707,9 +754,13 @@ class WebUIChannel(BaseChannel):
                     self._by_chat.get(old.chat_id, set()).discard(ws)
                     self._by_chat.setdefault(new_chat_id, set()).add(ws)
 
-                self._clients[ws] = _ClientKey(chat_id=new_chat_id, sender_id=old.sender_id, session_key=target)
+                self._clients[ws] = _ClientKey(
+                    chat_id=new_chat_id, sender_id=old.sender_id, session_key=target
+                )
 
-            await ws.send(json.dumps({"type": "session", "chat_id": new_chat_id, "session_key": target}))
+            await ws.send(
+                json.dumps({"type": "session", "chat_id": new_chat_id, "session_key": target})
+            )
             await self._send_history(ws, chat_id=new_chat_id, session_key=target)
             await self._send_settings(ws, session_key=target)
             return
@@ -769,7 +820,9 @@ class WebUIChannel(BaseChannel):
                     session.metadata.pop("verbosity", None)
                 await self._sessions.save_async(session)
             except Exception as e:
-                await ws.send(json.dumps({"type": "error", "error": f"failed to save verbosity: {e}"}))
+                await ws.send(
+                    json.dumps({"type": "error", "error": f"failed to save verbosity: {e}"})
+                )
                 return
 
             await self._broadcast_settings(session_key=key.session_key)
@@ -789,6 +842,18 @@ class WebUIChannel(BaseChannel):
                 await ws.send(json.dumps({"type": "error", "error": "invalid restrict_workspace"}))
                 return
 
+            if rw is False and not bool(self.config.allow_unrestricted_workspace):
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "error": "restrict_workspace=false is disabled by server config",
+                        }
+                    )
+                )
+                logger.warning("WebUI restrict_workspace=false rejected (disabled by config)")
+                return
+
             async with self._clients_lock:
                 key = self._clients.get(ws)
             if key is None:
@@ -800,9 +865,13 @@ class WebUIChannel(BaseChannel):
                 await self._sessions.save_async(session)
             except Exception as e:
                 await ws.send(
-                    json.dumps({"type": "error", "error": f"failed to save restrict_workspace: {e}"})
+                    json.dumps(
+                        {"type": "error", "error": f"failed to save restrict_workspace: {e}"}
+                    )
                 )
                 return
+
+            logger.warning(f"WebUI restrict_workspace set to {rw} for session {key.session_key}")
 
             await self._broadcast_settings(session_key=key.session_key)
             return
@@ -826,7 +895,9 @@ class WebUIChannel(BaseChannel):
 
         if msg_type in ("subagent_spawn", "spawn_subagent"):
             task = str(data.get("task") or "").strip()
-            label = str(data.get("label") or "").strip() if isinstance(data.get("label"), str) else ""
+            label = (
+                str(data.get("label") or "").strip() if isinstance(data.get("label"), str) else ""
+            )
             if not task:
                 await ws.send(json.dumps({"type": "error", "error": "missing task"}))
                 return
@@ -886,7 +957,9 @@ class WebUIChannel(BaseChannel):
                 await ws.send(json.dumps({"type": "error", "error": "upload too large (max 15MB)"}))
                 return
             if not (mime.startswith("image/") or mime == "application/pdf"):
-                await ws.send(json.dumps({"type": "error", "error": f"unsupported upload type: {mime}"}))
+                await ws.send(
+                    json.dumps({"type": "error", "error": f"unsupported upload type: {mime}"})
+                )
                 return
 
             upload_id = self._new_id("up").replace("up:", "")
@@ -911,7 +984,9 @@ class WebUIChannel(BaseChannel):
             try:
                 f = open(dest, "wb")
             except Exception as e:
-                await ws.send(json.dumps({"type": "error", "error": f"failed to open upload file: {e}"}))
+                await ws.send(
+                    json.dumps({"type": "error", "error": f"failed to open upload file: {e}"})
+                )
                 return
 
             async with self._clients_lock:
@@ -926,7 +1001,16 @@ class WebUIChannel(BaseChannel):
                 }
 
             rel = str(dest.relative_to(self.workspace)).replace("\\", "/")
-            await ws.send(json.dumps({"type": "upload_ready", "client_id": client_id or "", "upload_id": upload_id, "path": rel}))
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "upload_ready",
+                        "client_id": client_id or "",
+                        "upload_id": upload_id,
+                        "path": rel,
+                    }
+                )
+            )
             return
 
         if msg_type in ("upload_chunk",):
@@ -983,7 +1067,9 @@ class WebUIChannel(BaseChannel):
                         Path(path).unlink(missing_ok=True)
                 except Exception:
                     pass
-                await ws.send(json.dumps({"type": "error", "error": "upload exceeded expected size"}))
+                await ws.send(
+                    json.dumps({"type": "error", "error": "upload exceeded expected size"})
+                )
                 return
 
             if received == expected:
@@ -998,7 +1084,16 @@ class WebUIChannel(BaseChannel):
                     client_id = str(st.get("client_id") or "")
                 except Exception:
                     client_id = ""
-                await ws.send(json.dumps({"type": "upload_done", "client_id": client_id, "upload_id": upload_id, "path": rel}))
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "upload_done",
+                            "client_id": client_id,
+                            "upload_id": upload_id,
+                            "path": rel,
+                        }
+                    )
+                )
             return
 
         if msg_type != "message":
@@ -1029,7 +1124,11 @@ class WebUIChannel(BaseChannel):
                     continue
                 # Only allow files within the workspace to be attached.
                 try:
-                    p = (self.workspace / item).resolve() if not Path(item).is_absolute() else Path(item).resolve()
+                    p = (
+                        (self.workspace / item).resolve()
+                        if not Path(item).is_absolute()
+                        else Path(item).resolve()
+                    )
                     if self.workspace.resolve() not in p.parents and p != self.workspace.resolve():
                         continue
                     if p.is_file():

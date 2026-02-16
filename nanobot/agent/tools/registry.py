@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
-import time
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
@@ -20,10 +20,10 @@ class _CacheEntry:
 class ToolRegistry:
     """
     Registry for agent tools.
-    
+
     Allows dynamic registration and execution of tools.
     """
-    
+
     def __init__(self, *, cache_max_entries: int = 256, max_parallel: int = 8):
         self._tools: dict[str, Tool] = {}
         self._allowed_tools: set[str] | None = None
@@ -31,7 +31,7 @@ class ToolRegistry:
         self._max_parallel = max(int(max_parallel), 1)
         self._cache: "OrderedDict[str, _CacheEntry]" = OrderedDict()
         self._in_flight: dict[str, asyncio.Future[str]] = {}
-    
+
     def register(self, tool: Tool) -> None:
         """Register a tool."""
         self._tools[tool.name] = tool
@@ -39,19 +39,19 @@ class ToolRegistry:
     def iter_tools(self) -> list[Tool]:
         """Return registered tool instances (in insertion order)."""
         return list(self._tools.values())
-    
+
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""
         self._tools.pop(name, None)
-    
+
     def get(self, name: str) -> Tool | None:
         """Get a tool by name."""
         return self._tools.get(name)
-    
+
     def has(self, name: str) -> bool:
         """Check if a tool is registered."""
         return name in self._tools
-    
+
     def get_definitions(self) -> list[dict[str, Any]]:
         """Get all tool definitions in OpenAI format."""
         tools = self._tools.values()
@@ -114,18 +114,18 @@ class ToolRegistry:
             "url validation failed",
         )
         return not any(marker in s for marker in no_retry)
-    
+
     async def execute(self, name: str, params: dict[str, Any]) -> str:
         """
         Execute a tool by name with given parameters.
-        
+
         Args:
             name: Tool name.
             params: Tool parameters.
-        
+
         Returns:
             Tool execution result as string.
-        
+
         Raises:
             KeyError: If tool not found.
         """
@@ -182,7 +182,9 @@ class ToolRegistry:
         except Exception as e:
             return f"Error executing {name}: {str(e)}"
 
-    async def execute_calls(self, tool_calls: list[Any], *, allow_parallel: bool = True) -> list[str]:
+    async def execute_calls(
+        self, tool_calls: list[Any], *, allow_parallel: bool = True
+    ) -> list[str]:
         """
         Execute a sequence of tool calls, optionally parallelizing consecutive parallel-safe calls.
 
@@ -221,7 +223,7 @@ class ToolRegistry:
                 i += 1
 
         return results
-    
+
     @property
     def tool_names(self) -> list[str]:
         """Get list of registered tool names."""
@@ -233,9 +235,9 @@ class ToolRegistry:
             self._allowed_tools = None
             return
         self._allowed_tools = set(allowed)
-    
+
     def __len__(self) -> int:
         return len(self._tools)
-    
+
     def __contains__(self, name: str) -> bool:
         return name in self._tools
