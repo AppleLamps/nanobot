@@ -163,13 +163,14 @@ export function connect() {
       if (
         state.pendingNewChatDefaultRestrictWorkspace &&
         state.lastHistoryEmpty &&
-        typeof rw !== "boolean"
+        typeof rw !== "boolean" &&
+        !state.restrictWorkspace
       ) {
         try {
           state.ws.send(
             JSON.stringify({
               type: "set_restrict_workspace",
-              restrict_workspace: !!state.restrictWorkspace,
+              restrict_workspace: false,
             })
           );
         } catch (_) { }
@@ -263,6 +264,15 @@ export function connect() {
     }
 
     if (data.type === "error") {
+      /* If server rejects restrict_workspace=false, reset toggle and warn */
+      if (data.error && data.error.includes("restrict_workspace=false")) {
+        state.restrictWorkspace = true;
+        persist("restrictWorkspace", "true");
+        if (dom.restrictWorkspaceToggle) dom.restrictWorkspaceToggle.checked = true;
+        console.warn("[nanobot] restrict_workspace=false rejected by server; enable allowUnrestrictedWorkspace in config");
+        setStatus("ok", "connected");
+        return;
+      }
       if (state.thinkingRow) {
         state.thinkingRow.remove();
         state.thinkingRow = null;
